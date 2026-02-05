@@ -6,124 +6,118 @@ from src.styles import set_style, show_logo, kpi_card
 from src.data_processing import clean_name, compute_kpis
 from src.ppt_export import create_ppt
 import plotly.express as px
+import plotly.figure_factory as ff
 import numpy as np
 
 # -------------------------------
 # PAGE CONFIG
 # -------------------------------
 st.set_page_config(
-    page_title="Ticket Report Generator",
+    page_title="SITS Analytics BI",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # -------------------------------
-# CUSTOM STYLE
+# CUSTOM STYLE & LOGO
 # -------------------------------
 set_style()
 show_logo()
 
 # -------------------------------
-# PAGE TITLE
+# SESSION STATE DEFAULTS
 # -------------------------------
-st.title("Ticket Report Generator")
-st.markdown(
-    "Generate **board-ready ticket KPI reports** with filtering, anonymization, "
-    "monthly comparison, and export to **Excel & PowerPoint**."
+for key, default in {
+    "data": pd.DataFrame(),
+    "monthly_summary": pd.DataFrame(),
+    "tech_summary": pd.DataFrame(),
+    "caller_summary": pd.DataFrame(),
+    "show_kpis": True,
+    "show_trends": True,
+    "anonymize_data": False,
+    "theme": "Light",
+    "decimal_places": 1,
+    "default_format": "Excel",
+    "show_tooltips": True
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# =====================================================
+# SIDEBAR
+# =====================================================
+st.sidebar.title("Navigation")
+
+# ===== UNIVERSAL SEARCH BAR =====
+st.sidebar.markdown("### Universal Search")
+universal_search = st.sidebar.text_input("Search Technician, Caller, or Company")
+
+page = st.sidebar.radio(
+    "Go to",
+    ["Dashboard", "Advanced Analytics", "Data Explorer", "Export Center", "Settings"]
 )
 
+# Reset Session
+if st.sidebar.button("Reset Session"):
+    for key in st.session_state.keys():
+        st.session_state[key] = None
+    st.experimental_rerun()
+
 # =====================================================
-# 1️⃣ UPLOAD
+# FILE UPLOAD FUNCTION
 # =====================================================
-st.markdown("## Upload Ticket Data")
-uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type="xlsx")
-
-if uploaded_file:
-    data = pd.read_excel(uploaded_file)
-
-    with st.expander("Preview Uploaded Data"):
-        st.dataframe(data.head(), use_container_width=True)
-
-    # =====================================================
-    # 2️⃣ CLEANING
-    # =====================================================
-    st.markdown("## Data Cleaning & Filtering")
-    data['Company Name'] = clean_name(data, 'Organization->Name')
-    data['Technician Name'] = clean_name(data, 'Agent->Full name')
-    data['Caller Name'] = clean_name(data, 'Caller->Full name')
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if 'Company Name' in data.columns:
-            companies_to_remove = st.multiselect(
-                "Exclude Companies",
-                data['Company Name'].unique()
-            )
-            if companies_to_remove:
-                data = data[~data['Company Name'].isin(companies_to_remove)]
-    with col2:
-        persons_options = list(set(
-            data.get('Technician Name', pd.Series()).tolist() +
-            data.get('Caller Name', pd.Series()).tolist()
-        ))
-        if persons_options:
-            persons_to_remove = st.multiselect(
-                "Exclude Persons",
-                persons_options
-            )
-            if persons_to_remove:
-                mask_tech = data['Technician Name'].isin(persons_to_remove)
-                mask_caller = data['Caller Name'].isin(persons_to_remove)
-                data = data[~(mask_tech | mask_caller)]
-
-    # =====================================================
-    # 3️⃣ ANONYMIZATION
-    # =====================================================
-    st.markdown("## Data Anonymization")
-    sensitive_columns = st.multiselect(
-        "Select columns to anonymize",
-        options=data.columns
-    )
-    for col in sensitive_columns:
-        data[col] = [f"{col.split('->')[0]} {i+1}" for i in range(len(data))]
-
-    # =====================================================
-    # 4️⃣ TIME FILTER
-    # =====================================================
-    st.markdown("## Time Period")
-    if 'Start date' in data.columns:
-        data['Start date'] = pd.to_datetime(data['Start date'], errors='coerce')
-        data['Month'] = data['Start date'].dt.to_period('M').astype(str)
+def upload_file():
+    st.markdown("## Upload Ticket Data")
+    uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type="xlsx")
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file)
+        st.session_state.data = df.copy()
+        with st.expander("Preview Uploaded Data"):
+            st.dataframe(df.head(), use_container_width=True)
+        return df
     else:
-        data['Month'] = 'Unknown'
+        st.info("Please upload an Excel file to continue.")
+        st.stop()
 
-    all_months = sorted(data['Month'].dropna().unique(), reverse=True)
-    months_to_compare = st.selectbox(
-        "Select last N months",
-        options=[1, 2, 3, 4, 6, 12],
-        index=2
-    )
-    selected_months = all_months[:months_to_compare]
-    data = data[data['Month'].isin(selected_months)]
+# =====================================================
+# DATA CLEANING & ANONYMIZATION
+# =====================================================
+def clean_data(df):
+    df['Company Name'] = clean_name(df, 'Organization->Name') if 'Organization->Name' in df.columns else ""
+    df['Technician Name'] = clean_name(df, 'Agent->Full name') if 'Agent->Full name' in df.columns else ""
+    df['Caller Name'] = clean_name(df, 'Caller->Full name') if 'Caller->Full name' in df.columns else ""
+    return df
 
-    # =====================================================
-    # 5️⃣ KPI CALCULATION
-    # =====================================================
-    data = compute_kpis(data)
-    data['Duration (days)'] = pd.to_numeric(data.get('Duration (days)', 0), errors='coerce').fillna(0)
+def anonymize(df, columns):
+    for col in columns:
+        df[col] = [f"{col.split('->')[0]} {i+1}" for i in range(len(df))]
+    return df
+
+# =====================================================
+# KPI & SUMMARY FUNCTIONS
+# =====================================================
+def calculate_monthly_summary(df):
+    if 'Start date' in df.columns:
+        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+        df['Month'] = df['Start date'].dt.to_period('M').astype(str)
+    else:
+        df['Month'] = 'Unknown'
+
+    df = compute_kpis(df)
+    df['Duration (days)'] = pd.to_numeric(df.get('Duration (days)', 0), errors='coerce').fillna(0)
 
     monthly_summary = (
-        data.groupby('Month')
+        df.groupby('Month')
         .agg({
-            'Ref': 'count',                 # Total Tickets
-            'Done Tasks': 'sum',            # Closed Tickets
-            'Pending Tasks': 'sum',         # Pending Tickets
-            'SLA TTO Done': 'sum',          # SLA TTO Met
-            'SLA TTR Done': 'sum',          # SLA TTR Met
-            'Duration (days)': 'mean'       # Avg resolution
+            'Ref': 'count',
+            'Done Tasks': 'sum',
+            'Pending Tasks': 'sum',
+            'SLA TTO Done': 'sum',
+            'SLA TTR Done': 'sum',
+            'Duration (days)': 'mean'
         })
         .rename(columns={
-            'Ref': 'Total Tickets', 
+            'Ref': 'Total Tickets',
             'Done Tasks': 'Closed Tickets',
             'Pending Tasks': 'Pending Tickets',
             'Duration (days)': 'Avg Resolution Days'
@@ -131,123 +125,283 @@ if uploaded_file:
         .reset_index()
     )
 
-    # =====================================================
-    # SLA Violations Calculation
-    # =====================================================
     monthly_summary['SLA TTO Violations'] = monthly_summary['Total Tickets'] - monthly_summary['SLA TTO Done']
     monthly_summary['SLA TTR Violations'] = monthly_summary['Total Tickets'] - monthly_summary['SLA TTR Done']
     monthly_summary['SLA Violations'] = ((monthly_summary['SLA TTO Violations'] + monthly_summary['SLA TTR Violations']) / 2).round(0)
-
-    # Closure % = Closed / Total
     monthly_summary['Closure %'] = (monthly_summary['Closed Tickets'] / monthly_summary['Total Tickets'] * 100).round(1)
-
-    # SLA % = compliance % based on done
-    monthly_summary['SLA %'] = ((monthly_summary['SLA TTO Done'] + monthly_summary['SLA TTR Done']) 
-                                / (2 * monthly_summary['Total Tickets']) * 100).round(1)
+    monthly_summary['SLA %'] = ((monthly_summary['SLA TTO Done'] + monthly_summary['SLA TTR Done']) / (2 * monthly_summary['Total Tickets']) * 100).round(1)
     monthly_summary['Avg Resolution Days'] = monthly_summary['Avg Resolution Days'].fillna(0)
 
-    # =====================================================
-    # 6️⃣ KPI CARDS
-    # =====================================================
-    st.markdown("## Key Metrics")
-    total_tickets = int(monthly_summary['Total Tickets'].sum())
-    total_closed = int(monthly_summary['Closed Tickets'].sum())
-    total_pending = int(monthly_summary['Pending Tickets'].sum())
-    total_violations = int(monthly_summary['SLA Violations'].sum())
-    closure_rate = round(monthly_summary['Closure %'].mean(), 1)
-    sla_rate = round(monthly_summary['SLA %'].mean(), 1)
-    avg_resolution = round(monthly_summary['Avg Resolution Days'].mean(), 1)
+    return df, monthly_summary
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    with c1: kpi_card("Total Tickets", total_tickets)
-    with c2: kpi_card("Closed Tickets", total_closed, "#22C55E")
-    with c3: kpi_card("Pending Tickets", total_pending, "#F59E0B")
-    with c4: kpi_card("SLA Violations", total_violations, "#EF4444")
-    with c5: kpi_card("Closure %", f"{closure_rate}%", "#0EA5A4")
-    with c6: kpi_card("SLA Compliance %", f"{sla_rate}%", "#06B6D4")
+def top_performers(df, role_col):
+    summary = (
+        df.groupby(role_col)
+        .agg(Tickets=('Ref','count'), Done=('Done Tasks','sum'),
+             SLA_Done=('SLA TTO Done','sum'), SLA_TTR=('SLA TTR Done','sum'))
+        .reset_index()
+    )
+    summary['SLA %'] = ((summary['SLA_Done'] + summary['SLA_TTR']) / (summary['Tickets']*2) * 100).round(1)
+    top5 = summary.sort_values('SLA %', ascending=False).head(5)
+    return summary, top5
 
-    # =====================================================
-    # 7️⃣ TOP 5 PERFORMERS
-    # =====================================================
-    def sla_color(val):
+def style_sla(df, column='SLA %'):
+    def color(val):
         if val >= 90: return "green"
         elif val >= 75: return "orange"
         else: return "red"
+    return df.style.applymap(lambda x: f"color:{color(x)}; font-weight:bold", subset=[column])
 
-    def style_sla(df, column='SLA %'):
-        return df.style.applymap(lambda x: f"color:{sla_color(x)}; font-weight:bold", subset=[column])
+# =====================================================
+# UNIVERSAL SEARCH
+# =====================================================
+def apply_universal_search(df):
+    if universal_search:
+        df = df[
+            df['Technician Name'].str.contains(universal_search, case=False, na=False) |
+            df['Caller Name'].str.contains(universal_search, case=False, na=False) |
+            df['Company Name'].str.contains(universal_search, case=False, na=False)
+        ]
+    return df
 
-    # Technician
+# =====================================================
+# FILTER DATA - LAST 3 MONTHS ONLY
+# =====================================================
+def filter_last_3_months(df):
+    if 'Start date' in df.columns:
+        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+        today = pd.Timestamp.today()
+        three_months_ago = today - pd.DateOffset(months=3)
+        df_filtered = df[df['Start date'] >= three_months_ago]
+        return df_filtered
+    else:
+        return df
+
+# =====================================================
+# PREPARE DATA FUNCTION
+# =====================================================
+def prepare_data():
+    data = st.session_state.data if not st.session_state.data.empty else upload_file()
+    data = clean_data(data)
+    data = apply_universal_search(data)
+    data = filter_last_3_months(data)  # <-- last 3 months only
+    return data
+
+# =====================================================
+# DASHBOARD PAGE
+# =====================================================
+if page == "Dashboard":
+    st.markdown('<h1 class="page-title">DASHBOARD OVERVIEW</h1>', unsafe_allow_html=True)
+    st.markdown('<h4 class="page-subtitle">Your real-time BI insights at a glance</h4>', unsafe_allow_html=True)
+
+    data = prepare_data()
+
+    # EXCLUDE FILTERS
+    col1, col2 = st.columns(2)
+    with col1:
+        companies_to_remove = st.multiselect("Exclude Companies", data['Company Name'].dropna().unique())
+        if companies_to_remove:
+            data = data[~data['Company Name'].isin(companies_to_remove)]
+    with col2:
+        persons_options = list(set(data['Technician Name'].tolist() + data['Caller Name'].tolist()))
+        persons_to_remove = st.multiselect("Exclude Persons", persons_options)
+        if persons_to_remove:
+            mask_tech = data['Technician Name'].isin(persons_to_remove)
+            mask_caller = data['Caller Name'].isin(persons_to_remove)
+            data = data[~(mask_tech | mask_caller)]
+
+    # ANONYMIZATION
+    if st.session_state.anonymize_data:
+        sensitive_columns = st.multiselect("Select columns to anonymize", options=data.columns)
+        data = anonymize(data, sensitive_columns)
+
+    # CALCULATE KPI SUMMARY
+    data, monthly_summary = calculate_monthly_summary(data)
+    st.session_state.data = data
+    st.session_state.monthly_summary = monthly_summary
+
+    # SLA ALERT
+    if 'SLA %' in monthly_summary.columns:
+        avg_sla = monthly_summary['SLA %'].mean()
+        if avg_sla < 75:
+            st.warning(f"⚠️ SLA Compliance is low: {avg_sla:.1f}%")
+        elif avg_sla < 90:
+            st.info(f"ℹ️ SLA Compliance is moderate: {avg_sla:.1f}%")
+        else:
+            st.success(f"✅ SLA Compliance is excellent: {avg_sla:.1f}%")
+
+    # KPI CARDS
+    if st.session_state.show_kpis:
+        st.markdown("## Key Metrics")
+        c1,c2,c3,c4,c5,c6 = st.columns(6)
+        c1.metric("Total Tickets", int(monthly_summary['Total Tickets'].sum()))
+        c2.metric("Closed Tickets", int(monthly_summary['Closed Tickets'].sum()))
+        c3.metric("Pending Tickets", int(monthly_summary['Pending Tickets'].sum()))
+        c4.metric("SLA Violations", int(monthly_summary['SLA Violations'].sum()))
+        c5.metric("Closure %", f"{monthly_summary['Closure %'].mean():.1f}%")
+        c6.metric("SLA Compliance %", f"{monthly_summary['SLA %'].mean():.1f}%")
+
+    # KPI SUMMARY TABLE
+    st.markdown("## KPI Summary")
+    st.dataframe(monthly_summary, use_container_width=True)
+
+    # PIE CHART
+    if 'Closed Tickets' in monthly_summary.columns and 'Pending Tickets' in monthly_summary.columns:
+        st.markdown("## Ticket Status Distribution")
+        ticket_counts = monthly_summary[['Closed Tickets','Pending Tickets']].sum()
+        fig_pie = px.pie(
+            names=ticket_counts.index,
+            values=ticket_counts.values,
+            color=ticket_counts.index,
+            color_discrete_map={'Closed Tickets':'green','Pending Tickets':'orange'},
+            hole=0.3
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # TOP PERFORMERS
     if 'Technician Name' in data.columns:
-        st.markdown("## Top 5 Performing Technicians")
-        tech_summary = (
-            data.groupby('Technician Name')
-            .agg(Tickets=('Ref','count'), Done=('Done Tasks','sum'),
-                 SLA_Done=('SLA TTO Done','sum'), SLA_TTR=('SLA TTR Done','sum'))
-            .reset_index()
-        )
-        tech_summary['SLA %'] = ((tech_summary['SLA_Done'] + tech_summary['SLA_TTR']) / (tech_summary['Tickets']*2) * 100).round(1)
-        top_techs = tech_summary.sort_values(by='SLA %', ascending=False).head(5)
-        fig_tech = px.bar(top_techs, x='Technician Name', y='SLA %', text='SLA %', color='SLA %', color_continuous_scale='Tealgrn')
-        st.plotly_chart(fig_tech, use_container_width=True, config={'displayModeBar': False})
-        st.dataframe(style_sla(top_techs[['Technician Name','Tickets','Done','SLA %']]), use_container_width=True)
+        st.markdown("## Top 5 Technicians")
+        tech_summary, top_techs = top_performers(data, 'Technician Name')
+        st.plotly_chart(px.bar(top_techs, x='Technician Name', y='SLA %', text='SLA %', color='SLA %', color_continuous_scale='Tealgrn'))
+        st.dataframe(style_sla(top_techs), use_container_width=True)
+        st.session_state.tech_summary = tech_summary
 
-    # Caller
     if 'Caller Name' in data.columns:
-        st.markdown("## Top 5 Performing Caller Agents")
-        caller_summary = (
-            data.groupby('Caller Name')
-            .agg(Tickets=('Ref','count'), Done=('Done Tasks','sum'),
-                 SLA_Done=('SLA TTO Done','sum'), SLA_TTR=('SLA TTR Done','sum'))
-            .reset_index()
+        st.markdown("## Top 5 Callers")
+        caller_summary, top_callers = top_performers(data, 'Caller Name')
+        st.plotly_chart(px.bar(top_callers, x='Caller Name', y='SLA %', text='SLA %', color='SLA %', color_continuous_scale='Tealgrn'))
+        st.dataframe(style_sla(top_callers), use_container_width=True)
+        st.session_state.caller_summary = caller_summary
+
+    # MONTHLY TREND
+    if st.session_state.show_trends:
+        st.markdown("## Monthly KPI Trend")
+        fig = px.line(monthly_summary.sort_values('Month'), x='Month', y=['Closure %','SLA %'], markers=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # DOWNLOAD FILTERED CSV
+    if not data.empty:
+        st.markdown("## Download Filtered Data as CSV")
+        csv_output = data.to_csv(index=False).encode('utf-8')
+        st.download_button("Download CSV", csv_output, "filtered_data.csv", "text/csv")
+
+# =====================================================
+# ADVANCED ANALYTICS PAGE
+# =====================================================
+elif page == "Advanced Analytics":
+    st.markdown('<h1 class="page-title">ADVANCED ANALYTICS</h1>', unsafe_allow_html=True)
+    st.markdown('<h4 class="page-subtitle">Explore trends, correlations, and performance metrics</h4>', unsafe_allow_html=True)
+
+    data = prepare_data()
+    data, monthly_summary = calculate_monthly_summary(data)
+
+    # SLA vs Duration Scatter
+    st.markdown("## SLA vs Resolution Days")
+    if 'Duration (days)' in data.columns and 'SLA TTO Done' in data.columns:
+        fig = px.scatter(data, x='Duration (days)', y='SLA TTO Done',
+                         color='Technician Name' if 'Technician Name' in data.columns else None,
+                         size='Done Tasks' if 'Done Tasks' in data.columns else None,
+                         hover_data=['Company Name'] if 'Company Name' in data.columns else None)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Technician SLA Heatmap
+    st.markdown("## Technician SLA Heatmap")
+    if 'Technician Name' in data.columns and 'Month' in data.columns:
+        pivot = data.pivot_table(
+            index='Technician Name',
+            columns='Month',
+            values='SLA TTO Done',
+            aggfunc='sum',
+            fill_value=0
         )
-        caller_summary['SLA %'] = ((caller_summary['SLA_Done'] + caller_summary['SLA_TTR']) / (caller_summary['Tickets']*2) * 100).round(1)
-        top_callers = caller_summary.sort_values(by='SLA %', ascending=False).head(5)
-        fig_callers = px.bar(top_callers, x='Caller Name', y='SLA %', text='SLA %', color='SLA %', color_continuous_scale='Tealgrn')
-        st.plotly_chart(fig_callers, use_container_width=True, config={'displayModeBar': False})
-        st.dataframe(style_sla(top_callers[['Caller Name','Tickets','Done','SLA %']]), use_container_width=True)
+        fig_heat = ff.create_annotated_heatmap(
+            z=pivot.values,
+            x=list(pivot.columns),
+            y=list(pivot.index),
+            colorscale='YlOrRd',
+            showscale=True,
+            font_colors=['black'],
+            annotation_text=pivot.values,
+            hoverinfo='z'
+        )
+        fig_heat.update_layout(
+            xaxis=dict(tickangle=-60, tickfont=dict(size=9)),
+            yaxis=dict(tickfont=dict(size=8)),
+            margin=dict(l=200, r=50, t=50, b=150),
+            height=max(600, 30*len(pivot.index)),
+        )
+        fig_heat.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig_heat, use_container_width=True)
 
-    # =====================================================
-    # 8️⃣ MONTHLY KPI SUMMARY TABLE
-    # =====================================================
-    st.markdown("## Monthly KPI Summary")
-    st.dataframe(monthly_summary[
-        ['Month','Total Tickets','Closed Tickets','Pending Tickets',
-         'SLA Violations','SLA TTO Violations','SLA TTR Violations',
-         'Closure %','SLA %','Avg Resolution Days']
-    ], use_container_width=True)
+    # Correlation Analysis
+    st.markdown("## Correlation Matrix")
+    numeric_cols = data.select_dtypes(include=np.number).columns.tolist()
+    if numeric_cols:
+        corr = data[numeric_cols].corr()
+        fig_corr = px.imshow(corr, text_auto=True, color_continuous_scale='RdBu_r', aspect="auto")
+        st.plotly_chart(fig_corr, use_container_width=True)
+    else:
+        st.info("No numeric columns available for correlation analysis.")
 
-    # =====================================================
-    # 9️⃣ TREND CHART
-    # =====================================================
-    st.markdown("## Monthly KPI Trend")
-    monthly_summary_sorted = monthly_summary.sort_values('Month')
-    fig = px.line(monthly_summary_sorted, x='Month', y=['Closure %','SLA %'], markers=True)
-    fig.update_layout(title="Monthly KPI Trend", yaxis_title="%", xaxis_title="Month")
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+# =====================================================
+# DATA EXPLORER PAGE
+# =====================================================
+elif page == "Data Explorer":
+    st.markdown('<h1 class="page-title">DATA EXPLORER</h1>', unsafe_allow_html=True)
+    st.markdown('<h4 class="page-subtitle">Search, filter, and download your ticket data</h4>', unsafe_allow_html=True)
 
-    # =====================================================
-    # 🔟 EXPORT
-    # =====================================================
-    st.markdown("## Export Reports")
+    data = prepare_data()
+    data, _ = calculate_monthly_summary(data)
+    st.dataframe(data, use_container_width=True)
+
+    # Download Filtered
+    st.markdown("## Download Filtered Data")
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        data.to_excel(writer, sheet_name='Filtered_Data', index=False)
+    st.download_button("Download Excel", output.getvalue(), "filtered_data.xlsx")
+
+# =====================================================
+# EXPORT CENTER PAGE
+# =====================================================
+elif page == "Export Center":
+    st.markdown('<h1 class="page-title">EXPORT CENTER</h1>', unsafe_allow_html=True)
+    st.markdown('<h4 class="page-subtitle">Download processed reports and presentations</h4>', unsafe_allow_html=True)
+
+    data = prepare_data()
+    monthly_summary = st.session_state.monthly_summary
+    tech_summary = st.session_state.tech_summary
+    caller_summary = st.session_state.caller_summary
+
+    st.markdown("## Download Reports")
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         data.to_excel(writer, sheet_name='Processed_Data', index=False)
         monthly_summary.to_excel(writer, sheet_name='Monthly_Summary', index=False)
-        if 'tech_summary' in locals(): tech_summary.to_excel(writer, sheet_name='Technician_Summary', index=False)
-        if 'caller_summary' in locals(): caller_summary.to_excel(writer, sheet_name='Caller_Summary', index=False)
-    excel_data = output.getvalue()
+        if not tech_summary.empty: tech_summary.to_excel(writer, sheet_name='Technician_Summary', index=False)
+        if not caller_summary.empty: caller_summary.to_excel(writer, sheet_name='Caller_Summary', index=False)
+    st.download_button("Download Excel", output.getvalue(), "analytics_report.xlsx")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button("Download Excel", excel_data, file_name="ticket_report.xlsx")
-    with col2:
-        prs = create_ppt({
-            'Monthly KPI': monthly_summary,
-            'Technician-wise KPI': tech_summary if 'tech_summary' in locals() else pd.DataFrame(),
-            'Caller-wise KPI': caller_summary if 'caller_summary' in locals() else pd.DataFrame()
-        })
-        ppt_output = BytesIO()
-        prs.save(ppt_output)
-        ppt_output.seek(0)
-        st.download_button("Download PowerPoint", ppt_output, file_name="ticket_report.pptx")
+    # PowerPoint
+    prs = create_ppt({
+        'Monthly KPI': monthly_summary,
+        'Technician-wise KPI': tech_summary,
+        'Caller-wise KPI': caller_summary
+    })
+    ppt_output = BytesIO()
+    prs.save(ppt_output)
+    ppt_output.seek(0)
+    st.download_button("Download PowerPoint", ppt_output, "analytics_report.pptx")
+
+# =====================================================
+# SETTINGS PAGE
+# =====================================================
+elif page == "Settings":
+    st.markdown('<h1 class="page-title">SETTINGS</h1>', unsafe_allow_html=True)
+    st.markdown('<h4 class="page-subtitle">Customize your dashboard preferences</h4>', unsafe_allow_html=True)
+
+    st.session_state.show_kpis = st.checkbox("Show KPI Cards", value=st.session_state.show_kpis)
+    st.session_state.show_trends = st.checkbox("Show Monthly Trends", value=st.session_state.show_trends)
+    st.session_state.anonymize_data = st.checkbox("Anonymize Sensitive Data", value=st.session_state.anonymize_data)
+    st.session_state.decimal_places = st.slider("Decimal Places in Reports", 0, 3, value=st.session_state.decimal_places)
+    st.session_state.theme = st.selectbox("Theme", ["Light", "Dark"], index=0 if st.session_state.theme=="Light" else 1)
