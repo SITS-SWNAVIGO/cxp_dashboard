@@ -26,7 +26,6 @@ def apply_styles():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
         
-        /* Define Dynamic Variables for Light/Dark Mode */
         :root {
             --bg-card: #ffffff;
             --text-main: #1F3B4D;
@@ -48,14 +47,12 @@ def apply_styles():
             font-size: 0.8rem !important;
         }
 
-        /* COMPACT LAYOUT WHILE PRESERVING TOP BAR */
         .block-container {
-            padding-top: 3rem !important; /* Standard space to show the top bar */
+            padding-top: 3rem !important;
             padding-bottom: 1rem !important;
             max-width: 98% !important;
         }
 
-        /* Sidebar Styling */
         [data-testid="stSidebar"] {
             background-color: #1F3B4D !important;
             border-right: 1px solid rgba(255, 255, 255, 0.1);
@@ -97,13 +94,13 @@ def apply_styles():
             border: 1px solid var(--border-color);
         }
         .kpi-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
-        .kpi-value { font-size: 1.2rem; font-weight: 800; margin: 0; }
+        .kpi-value { font-size: 1.1rem; font-weight: 800; margin: 0; }
 
         .section-header {
             color: var(--text-main) !important;
             font-weight: 800;
-            font-size: 1.2rem;
-            margin: 10px 0 5px 0;
+            font-size: 1.1rem;
+            margin: 15px 0 10px 0;
             display: block;
             border-left: 3px solid #FF6600;
             padding-left: 10px;
@@ -121,11 +118,43 @@ def kpi_card(label, value, color="#FF6600"):
         </div>
     ''', unsafe_allow_html=True)
 
+# --- TECHNICIAN TEAM MAPPING ---
+def get_team_from_technician(name):
+    sits_support = [
+        "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
+        "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
+        "Nirantha Madhushanka", "Kavinda Nethmal", "Heshan Lakshitha", "Sanath Manjula",
+        "Nadeesh Madhushan", "H.D.P Pradeep", "Dilan Madhawa", "SITS IT Support",
+        "Sayanthan Rasalinkam", "Malmi Nandasiri", "Uthayananthan Thanushanth",
+        "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
+        "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
+        "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
+        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna"
+    ]
+    gamma_it = [
+        "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
+        "Preshan Silva", "Kavindu Basilu", "Nimna Mendis", "Janindu Hewaalankarage",
+        "Hasitha Munasinghe", "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan",
+        "Hashan Madushanka"
+    ]
+    service_desk = [
+        "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
+        "Sasanka Madusith", "Ositha Buddika"
+    ]
+    
+    if name in sits_support: return "SITS IT Support"
+    if name in gamma_it: return "Gamma IT"
+    if name in service_desk: return "Service Desk"
+    return "Unassigned"
+
 def process_data_safely(df):
     if df is None or df.empty: return pd.DataFrame()
     tto_col = next((c for c in ['SLA tto passed', 'TTO passed'] if c in df.columns), None)
     ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed'] if c in df.columns), None)
+    a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df.columns), None)
     
+    # 1 if No (meaning NOT passed/failed), 0 if Yes (meaning SLA was breached)
+    # We define 'Done' as meeting the SLA.
     df['TTO_Done'] = df[tto_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if tto_col else 0
     df['TTR_Done'] = df[ttr_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if ttr_col else 0
     
@@ -135,6 +164,9 @@ def process_data_safely(df):
     
     if 'Start date' in df.columns:
         df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+    
+    if a_col:
+        df['Mapped_Team'] = df[a_col].apply(get_team_from_technician)
     
     if 'Ref' not in df.columns: df['Ref'] = range(len(df))
     return df
@@ -166,7 +198,7 @@ if st.session_state.data.empty:
 
 # --- DATA PREP ---
 df_base = st.session_state.data.copy()
-t_col = next((c for c in ['Team->Name', 'Team'] if c in df_base.columns), None)
+t_col = 'Mapped_Team'
 a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df_base.columns), None)
 c_col = next((c for c in ['Organization->Name', 'Organization'] if c in df_base.columns), None)
 reason_col = next((c for c in ['Pending reason', 'Pending Reason'] if c in df_base.columns), None)
@@ -191,15 +223,13 @@ with st.sidebar:
         else: selected_dates = None
     else: selected_dates = None
 
-    units = ["All Departments"] + sorted(df_base[t_col].dropna().unique().tolist()) if t_col else ["All Departments"]
+    units = ["All Departments", "SITS IT Support", "Gamma IT", "Service Desk"]
     selected_unit = st.selectbox("Operational Unit", units)
     
-    # Customer Selection Filter (Changed from multiselect to selectbox)
     all_orgs_list = ["All Customers"] + sorted(df_base[c_col].dropna().unique().tolist()) if c_col else ["All Customers"]
     selected_org = st.selectbox("Select Customer", all_orgs_list)
     
     st.markdown("### EXCLUSIONS")
-    # Exclusion list remains sorted without the "All" prefix as it is meant for specific exclusions
     orgs_for_exclusion = sorted(df_base[c_col].dropna().unique().tolist()) if c_col else []
     excluded_orgs = st.multiselect("Exclude Organizations", orgs_for_exclusion)
     
@@ -212,13 +242,10 @@ with st.sidebar:
 
 # --- FILTERING ---
 df = df_base.copy()
-
-# Apply Customer Selection Filter (Updated logic for single selection)
 if selected_org != "All Customers" and c_col:
     df = df[df[c_col] == selected_org]
 
 if 'Status' in df.columns:
-    # Calculate backlog based on current selection (including customer filter)
     backlog_val = len(df[df['Status'].astype(str).str.strip().str.lower() == 'pending'])
 else:
     backlog_val = 0
@@ -232,84 +259,117 @@ else:
 
 if selected_dates and len(selected_dates) == 2:
     df = df[(df['Start date'].dt.date >= selected_dates[0]) & (df['Start date'].dt.date <= selected_dates[1])]
-if t_col and selected_unit != "All Departments": 
+if selected_unit != "All Departments": 
     df = df[df[t_col] == selected_unit]
 if excluded_orgs and c_col:
     df = df[~df[c_col].isin(excluded_orgs)]
 if excluded_agents and a_col:
     df = df[~df[a_col].isin(excluded_agents)]
 
-# --- MAIN DASHBOARD ---
+# --- BREACH CALCULATIONS ---
+total_v = max(1, len(df))
+tto_breach_count = len(df) - df['TTO_Done'].sum()
+ttr_breach_count = len(df) - df['TTR_Done'].sum()
+tto_breach_pct = (tto_breach_count / total_v) * 100
+ttr_breach_pct = (ttr_breach_count / total_v) * 100
+
+# --- MAIN INTERFACE ---
 if aged_count > 0:
-    st.warning(f"CRITICAL ALERT: There are {aged_count} Pending tickets that have been open for more than 30 days!")
+    st.error(f"⚠️ CRITICAL ALERT: {aged_count} Pending tickets have been open for more than 30 days!")
 
 st.markdown(f'<div class="header-box"><h2>CXP ANALYTICS: {selected_unit.upper()}</h2></div>', unsafe_allow_html=True)
 
-# ROW 1
-st.markdown('<span class="section-header">Performance Overview</span>', unsafe_allow_html=True)
-k1, k2, k3, k4, k5 = st.columns(5)
-with k1: kpi_card("Selected Volume", len(df))
-with k2: kpi_card("TTO Performance", f"{(df['TTO_Done'].sum()/max(1,len(df))*100):.1f}%")
-with k3: kpi_card("TTR Performance", f"{(df['TTR_Done'].sum()/max(1,len(df))*100):.1f}%")
-with k4: kpi_card("Live Total Backlog", backlog_val, color="#FF0000")
-with k5: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
+tab1, tab2 = st.tabs(["Main Dashboard", "Top Performers"])
 
-# ROW 2
-st.markdown('<span class="section-header">Total Tickets by Status</span>', unsafe_allow_html=True)
-if 'Status' in df.columns:
-    status_counts = df['Status'].value_counts()
-    stat_cols = st.columns(len(status_counts) if len(status_counts) > 0 else 1)
-    for i, (name, count) in enumerate(status_counts.items()):
-        with stat_cols[i]:
-            s_color = "#2E7D32" if name.lower() == 'closed' else "#1976D2" if name.lower() == 'assigned' else "#FBC02D" if name.lower() == 'resolved' else "#FF6600"
-            kpi_card(name, count, color=s_color)
+with tab1:
+    st.markdown('<span class="section-header">Performance & Breach Overview</span>', unsafe_allow_html=True)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1: kpi_card("Total Volume", len(df))
+    with k2: kpi_card("TTO Breaches", f"{tto_breach_count} ({tto_breach_pct:.1f}%)", color="#D32F2F")
+    with k3: kpi_card("TTR Breaches", f"{ttr_breach_count} ({ttr_breach_pct:.1f}%)", color="#D32F2F")
+    with k4: kpi_card("Total Backlog", backlog_val, color="#1F3B4D")
+    with k5: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
 
-# --- MONTHLY ANALYSIS ---
-if 'Start date' in df.columns:
-    df['Month'] = df['Start date'].dt.to_period('M').astype(str)
-    monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum','Is_Closed':'sum'}).reset_index()
-    monthly['TTO %'] = (monthly['TTO_Done'] / monthly['Ref'] * 100).round(1)
-    monthly['TTR %'] = (monthly['TTR_Done'] / monthly['Ref'] * 100).round(1)
-else: monthly = pd.DataFrame()
+    # Status Breakdown Row
+    if 'Status' in df.columns:
+        status_counts = df['Status'].value_counts()
+        stat_cols = st.columns(len(status_counts) if len(status_counts) > 0 else 1)
+        for i, (name, count) in enumerate(status_counts.items()):
+            with stat_cols[i]:
+                s_color = "#2E7D32" if name.lower() == 'closed' else "#1976D2" if name.lower() == 'assigned' else "#FBC02D" if name.lower() == 'resolved' else "#FF6600"
+                kpi_card(name, count, color=s_color)
 
-st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
-cl, cr = st.columns([1.5, 1])
-with cl:
-    if not monthly.empty:
-        fig = px.bar(monthly, x='Month', y=['TTO %', 'TTR %'], barmode='group', color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'})
-        is_dark = st.get_option("theme.base") == "dark"
-        f_color = "#E0E0E0" if is_dark else "#333333"
-        g_color = "#333333" if is_dark else "#f0f0f0"
-        fig.update_layout(
-            height=280, margin=dict(l=0,r=0,t=10,b=0), 
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color=f_color),
-            legend=dict(orientation="h", y=1.1, x=1, font=dict(color=f_color)),
-            xaxis=dict(tickfont=dict(color=f_color), showgrid=False),
-            yaxis=dict(tickfont=dict(color=f_color), gridcolor=g_color)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-with cr:
-    st.dataframe(monthly, use_container_width=True, hide_index=True, height=280)
+    # Top 10 Customers Row
+    if c_col:
+        st.markdown('<span class="section-header">Top 10 Customers by Ticket Volume</span>', unsafe_allow_html=True)
+        top_cust = df.groupby(c_col)['Ref'].count().reset_index().sort_values('Ref', ascending=False).head(10)
+        top_cust.columns = ['Customer Name', 'Ticket Count']
+        
+        c_chart, c_table = st.columns([1.5, 1])
+        with c_chart:
+            fig_cust = px.bar(top_cust, x='Ticket Count', y='Customer Name', orientation='h', color_discrete_sequence=['#FF6600'])
+            fig_cust.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_cust, use_container_width=True)
+        with c_table:
+            st.dataframe(top_cust, use_container_width=True, hide_index=True, height=300)
 
-# --- AGED TICKETS QUEUE ---
-if aged_count > 0:
-    st.markdown('<span class="section-header" style="color:#7B1FA2 !important;">Aged Pending Tickets Details</span>', unsafe_allow_html=True)
-    aged_cols = ['Ref', 'Title', 'Start date', a_col]
-    if reason_col: aged_cols.append(reason_col)
-    st.dataframe(aged_df[aged_cols].sort_values('Start date'), use_container_width=True, hide_index=True)
+    # Monthly SLA Analysis
+    if 'Start date' in df.columns:
+        df['Month'] = df['Start date'].dt.to_period('M').astype(str)
+        monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum'}).reset_index()
+        monthly['TTO %'] = (monthly['TTO_Done'] / monthly['Ref'] * 100).round(1)
+        monthly['TTR %'] = (monthly['TTR_Done'] / monthly['Ref'] * 100).round(1)
+        
+        st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
+        cl, cr = st.columns([1.5, 1])
+        with cl:
+            fig = px.bar(monthly, x='Month', y=['TTO %', 'TTR %'], barmode='group', color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'})
+            fig.update_layout(height=280, margin=dict(l=0,r=0,t=10,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
+            st.plotly_chart(fig, use_container_width=True)
+        with cr:
+            st.dataframe(monthly, use_container_width=True, hide_index=True, height=280)
 
-# --- PENDING QUEUE WITH SEARCH ---
-st.markdown('<span class="section-header">All Pending Tickets Queue</span>', unsafe_allow_html=True)
-if 'Status' in df.columns:
-    pending_display = df[df['Status'].astype(str).str.strip().str.lower() == 'pending'].copy()
-    if not pending_display.empty:
-        search_query = st.text_input("Search Pending Tickets", placeholder="Ref or Title...")
-        if search_query:
-            pending_display = pending_display[
-                pending_display['Ref'].astype(str).str.contains(search_query, case=False, na=False) |
-                pending_display['Title'].astype(str).str.contains(search_query, case=False, na=False)
-            ]
-        cols = ['Ref', 'Title', 'Status', a_col]
-        if reason_col: cols.append(reason_col)
-        st.dataframe(pending_display.sort_values('Ref'), use_container_width=True, hide_index=True)
+    # Aged Tickets Details
+    if aged_count > 0:
+        st.markdown('<span class="section-header" style="color:#7B1FA2 !important;">Aged Pending Tickets Details (>30 Days)</span>', unsafe_allow_html=True)
+        aged_cols = ['Ref', 'Title', 'Start date', a_col]
+        if reason_col: aged_cols.append(reason_col)
+        st.dataframe(aged_df[aged_cols].sort_values('Start date'), use_container_width=True, hide_index=True)
+
+    # Pending Queue
+    st.markdown('<span class="section-header">All Pending Tickets Queue</span>', unsafe_allow_html=True)
+    if 'Status' in df.columns:
+        pending_display = df[df['Status'].astype(str).str.strip().str.lower() == 'pending'].copy()
+        if not pending_display.empty:
+            search_query = st.text_input("Search Pending Tickets", placeholder="Ref or Title...")
+            if search_query:
+                pending_display = pending_display[
+                    pending_display['Ref'].astype(str).str.contains(search_query, case=False, na=False) |
+                    pending_display['Title'].astype(str).str.contains(search_query, case=False, na=False)
+                ]
+            cols = ['Ref', 'Title', 'Status', a_col]
+            if reason_col: cols.append(reason_col)
+            st.dataframe(pending_display.sort_values('Ref'), use_container_width=True, hide_index=True)
+
+with tab2:
+    if a_col:
+        perf_data = df.groupby([a_col, t_col]).agg({
+            'Ref': 'count',
+            'TTO_Done': 'sum',
+            'TTR_Done': 'sum'
+        }).reset_index()
+        perf_data.columns = ['Agent', 'Department', 'Tickets', 'TTO Met', 'TTR Met']
+        
+        # Calculate met percentages and breach counts
+        perf_data['TTO %'] = (perf_data['TTO Met'] / perf_data['Tickets'] * 100).round(1)
+        perf_data['TTR %'] = (perf_data['TTR Met'] / perf_data['Tickets'] * 100).round(1)
+        perf_data['Total Breaches'] = (perf_data['Tickets'] * 2) - (perf_data['TTO Met'] + perf_data['TTR Met'])
+
+        depts = ["SITS IT Support", "Gamma IT", "Service Desk"]
+        for dept in depts:
+            dept_df = perf_data[perf_data['Department'] == dept].sort_values('Tickets', ascending=False)
+            if not dept_df.empty:
+                st.markdown(f'<span class="section-header">{dept.upper()} PERSONNEL PERFORMANCE</span>', unsafe_allow_html=True)
+                st.dataframe(dept_df, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"No active data for {dept} in current filter.")
