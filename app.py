@@ -14,7 +14,8 @@ st.set_page_config(
 )
 
 # --- LOGO PATH ---
-LOGO_PATH = r"C:\Users\malki.p\Desktop\Power BI\assets\logo.png"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
 
 # --- INITIALIZE SESSION STATE ---
 if "data" not in st.session_state: 
@@ -55,7 +56,6 @@ def apply_styles():
 
         [data-testid="stSidebar"] {
             background-color: #1F3B4D !important;
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         [data-testid="stSidebar"] .stMarkdown, 
@@ -69,7 +69,6 @@ def apply_styles():
             background-color: #FF6600 !important;
             color: white !important;
             border-radius: 6px !important;
-            border: none !important;
         }
 
         .header-box {
@@ -87,19 +86,20 @@ def apply_styles():
 
         .kpi-wrapper {
             background-color: var(--bg-card);
-            padding: 12px 16px;
+            padding: 10px 12px;
             border-radius: 8px;
             margin-bottom: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             border: 1px solid var(--border-color);
+            text-align: center;
         }
-        .kpi-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
-        .kpi-value { font-size: 1.1rem; font-weight: 800; margin: 0; }
+        .kpi-label { font-size: 0.6rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
+        .kpi-value { font-size: 1rem; font-weight: 800; margin: 0; }
 
         .section-header {
             color: var(--text-main) !important;
             font-weight: 800;
-            font-size: 1.1rem;
+            font-size: 1rem;
             margin: 15px 0 10px 0;
             display: block;
             border-left: 3px solid #FF6600;
@@ -112,7 +112,7 @@ def apply_styles():
 
 def kpi_card(label, value, color="#FF6600"):
     st.markdown(f'''
-        <div class="kpi-wrapper" style="border-left: 5px solid {color};">
+        <div class="kpi-wrapper" style="border-top: 3px solid {color};">
             <p class="kpi-label">{label}</p>
             <p class="kpi-value" style="color: {color};">{value}</p>
         </div>
@@ -153,8 +153,6 @@ def process_data_safely(df):
     ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed'] if c in df.columns), None)
     a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df.columns), None)
     
-    # 1 if No (meaning NOT passed/failed), 0 if Yes (meaning SLA was breached)
-    # We define 'Done' as meeting the SLA.
     df['TTO_Done'] = df[tto_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if tto_col else 0
     df['TTR_Done'] = df[ttr_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if ttr_col else 0
     
@@ -266,10 +264,15 @@ if excluded_orgs and c_col:
 if excluded_agents and a_col:
     df = df[~df[a_col].isin(excluded_agents)]
 
-# --- BREACH CALCULATIONS ---
+# --- BREACH & PERFORMANCE CALCULATIONS ---
 total_v = max(1, len(df))
-tto_breach_count = len(df) - df['TTO_Done'].sum()
-ttr_breach_count = len(df) - df['TTR_Done'].sum()
+tto_met_count = df['TTO_Done'].sum()
+ttr_met_count = df['TTR_Done'].sum()
+tto_breach_count = len(df) - tto_met_count
+ttr_breach_count = len(df) - ttr_met_count
+
+tto_perf_pct = (tto_met_count / total_v) * 100
+ttr_perf_pct = (ttr_met_count / total_v) * 100
 tto_breach_pct = (tto_breach_count / total_v) * 100
 ttr_breach_pct = (ttr_breach_count / total_v) * 100
 
@@ -283,28 +286,45 @@ tab1, tab2 = st.tabs(["Main Dashboard", "Top Performers"])
 
 with tab1:
     st.markdown('<span class="section-header">Performance & Breach Overview</span>', unsafe_allow_html=True)
-    k1, k2, k3, k4, k5 = st.columns(5)
-    with k1: kpi_card("Total Volume", len(df))
-    with k2: kpi_card("TTO Breaches", f"{tto_breach_count} ({tto_breach_pct:.1f}%)", color="#D32F2F")
-    with k3: kpi_card("TTR Breaches", f"{ttr_breach_count} ({ttr_breach_pct:.1f}%)", color="#D32F2F")
-    with k4: kpi_card("Total Backlog", backlog_val, color="#1F3B4D")
-    with k5: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
+    
+    # --- TTO SECTION ---
+    st.markdown("#### TTO Metrics")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: kpi_card("TTO Perf %", f"{tto_perf_pct:.1f}%", color="#2E7D32" if tto_perf_pct >= 90 else "#FF6600")
+    with c2: kpi_card("TTO Met", f"{tto_met_count}", color="#2E7D32")
+    with c3: kpi_card("TTO Breach %", f"{tto_breach_pct:.1f}%", color="#D32F2F")
+    with c4: kpi_card("TTO Breach", tto_breach_count, color="#D32F2F")
+
+    # --- TTR SECTION ---
+    st.markdown("#### TTR Metrics")
+    c5, c6, c7, c8 = st.columns(4)
+    with c5: kpi_card("TTR Perf %", f"{ttr_perf_pct:.1f}%", color="#2E7D32" if ttr_perf_pct >= 90 else "#FF6600")
+    with c6: kpi_card("TTR Met", f"{ttr_met_count}", color="#2E7D32")
+    with c7: kpi_card("TTR Breach %", f"{ttr_breach_pct:.1f}%", color="#D32F2F")
+    with c8: kpi_card("TTR Breach", ttr_breach_count, color="#D32F2F")
+
+    # --- GENERAL VOLUME ---
+    st.write("### Overall Metrics")
+    c9, c10, c11, _ = st.columns([1,1,1,1])
+    with c9: kpi_card("Total Volume", len(df), color="#1F3B4D")
+    with c10: kpi_card("Total Backlog", backlog_val, color="#1F3B4D")
+    with c11: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
 
     # Status Breakdown Row
     if 'Status' in df.columns:
         status_counts = df['Status'].value_counts()
-        stat_cols = st.columns(len(status_counts) if len(status_counts) > 0 else 1)
-        for i, (name, count) in enumerate(status_counts.items()):
-            with stat_cols[i]:
-                s_color = "#2E7D32" if name.lower() == 'closed' else "#1976D2" if name.lower() == 'assigned' else "#FBC02D" if name.lower() == 'resolved' else "#FF6600"
-                kpi_card(name, count, color=s_color)
+        if not status_counts.empty:
+            st.write("") 
+            stat_cols = st.columns(len(status_counts))
+            for i, (name, count) in enumerate(status_counts.items()):
+                with stat_cols[i]:
+                    s_color = "#2E7D32" if name.lower() == 'closed' else "#1976D2" if name.lower() == 'assigned' else "#FBC02D" if name.lower() == 'resolved' else "#FF6600"
+                    kpi_card(name, count, color=s_color)
 
-    # Top 10 Customers Row
     if c_col:
         st.markdown('<span class="section-header">Top 10 Customers by Ticket Volume</span>', unsafe_allow_html=True)
         top_cust = df.groupby(c_col)['Ref'].count().reset_index().sort_values('Ref', ascending=False).head(10)
         top_cust.columns = ['Customer Name', 'Ticket Count']
-        
         c_chart, c_table = st.columns([1.5, 1])
         with c_chart:
             fig_cust = px.bar(top_cust, x='Ticket Count', y='Customer Name', orientation='h', color_discrete_sequence=['#FF6600'])
@@ -313,7 +333,6 @@ with tab1:
         with c_table:
             st.dataframe(top_cust, use_container_width=True, hide_index=True, height=300)
 
-    # Monthly SLA Analysis
     if 'Start date' in df.columns:
         df['Month'] = df['Start date'].dt.to_period('M').astype(str)
         monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum'}).reset_index()
@@ -327,16 +346,15 @@ with tab1:
             fig.update_layout(height=280, margin=dict(l=0,r=0,t=10,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
             st.plotly_chart(fig, use_container_width=True)
         with cr:
-            st.dataframe(monthly, use_container_width=True, hide_index=True, height=280)
+            st.dataframe(monthly[['Month', 'Ref', 'TTO %', 'TTR %']], use_container_width=True, hide_index=True, height=280)
 
-    # Aged Tickets Details
+    # Tables
     if aged_count > 0:
         st.markdown('<span class="section-header" style="color:#7B1FA2 !important;">Aged Pending Tickets Details (>30 Days)</span>', unsafe_allow_html=True)
         aged_cols = ['Ref', 'Title', 'Start date', a_col]
         if reason_col: aged_cols.append(reason_col)
         st.dataframe(aged_df[aged_cols].sort_values('Start date'), use_container_width=True, hide_index=True)
 
-    # Pending Queue
     st.markdown('<span class="section-header">All Pending Tickets Queue</span>', unsafe_allow_html=True)
     if 'Status' in df.columns:
         pending_display = df[df['Status'].astype(str).str.strip().str.lower() == 'pending'].copy()
@@ -358,18 +376,33 @@ with tab2:
             'TTO_Done': 'sum',
             'TTR_Done': 'sum'
         }).reset_index()
-        perf_data.columns = ['Agent', 'Department', 'Tickets', 'TTO Met', 'TTR Met']
         
-        # Calculate met percentages and breach counts
-        perf_data['TTO %'] = (perf_data['TTO Met'] / perf_data['Tickets'] * 100).round(1)
-        perf_data['TTR %'] = (perf_data['TTR Met'] / perf_data['Tickets'] * 100).round(1)
-        perf_data['Total Breaches'] = (perf_data['Tickets'] * 2) - (perf_data['TTO Met'] + perf_data['TTR Met'])
+        perf_data['TTO_Br'] = perf_data['Ref'] - perf_data['TTO_Done']
+        perf_data['TTR_Br'] = perf_data['Ref'] - perf_data['TTR_Done']
+        perf_data['TTO_Pct'] = (perf_data['TTO_Done'] / perf_data['Ref'] * 100).round(1)
+        perf_data['TTR_Pct'] = (perf_data['TTR_Done'] / perf_data['Ref'] * 100).round(1)
+        perf_data['TTO_Br_Pct'] = (100 - perf_data['TTO_Pct']).round(1)
+        perf_data['TTR_Br_Pct'] = (100 - perf_data['TTR_Pct']).round(1)
+
+        perf_data.columns = [
+            'Agent', 'Department', 'Total', 
+            'TTO Met', 'TTR Met', 'TTO Breach', 'TTR Breach',
+            'TTO %', 'TTR %', 'TTO Br %', 'TTR Br %'
+        ]
 
         depts = ["SITS IT Support", "Gamma IT", "Service Desk"]
         for dept in depts:
-            dept_df = perf_data[perf_data['Department'] == dept].sort_values('Tickets', ascending=False)
+            dept_df = perf_data[perf_data['Department'] == dept].sort_values('Total', ascending=False)
             if not dept_df.empty:
                 st.markdown(f'<span class="section-header">{dept.upper()} PERSONNEL PERFORMANCE</span>', unsafe_allow_html=True)
-                st.dataframe(dept_df, use_container_width=True, hide_index=True)
-            else:
-                st.info(f"No active data for {dept} in current filter.")
+                st.dataframe(
+                    dept_df[['Agent', 'Total', 'TTO Met', 'TTO Breach', 'TTO %', 'TTO Br %', 'TTR Met', 'TTR Breach', 'TTR %', 'TTR Br %']], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "TTO %": st.column_config.NumberColumn(format="%.1f%%"),
+                        "TTO Br %": st.column_config.NumberColumn(format="%.1f%%"),
+                        "TTR %": st.column_config.NumberColumn(format="%.1f%%"),
+                        "TTR Br %": st.column_config.NumberColumn(format="%.1f%%")
+                    }
+                )
