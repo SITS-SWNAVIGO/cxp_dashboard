@@ -43,6 +43,67 @@ def apply_styles():
             }
         }
 
+        /* --- TABS PREFERENCE FIX --- */
+        /* Resets tabs to prevent them from looking like orange buttons */
+        button[data-baseweb="tab"] {
+            background-color: transparent !important;
+            border: none !important;
+            color: var(--text-main) !important;
+            font-weight: 600 !important;
+            padding: 10px 20px !important;
+        }
+
+        /* Active tab indicator */
+        button[data-baseweb="tab"][aria-selected="true"] {
+            color: #FF6600 !important;
+            border-bottom: 3px solid #FF6600 !important;
+        }
+
+        /* --- ACTUAL BUTTONS --- */
+        /* Targets real buttons while excluding tab elements */
+        div.stButton > button:not([data-baseweb="tab"]) {
+            background-color: #FF6600 !important;
+            color: white !important;
+            border-radius: 6px !important;
+            border: none !important;
+            transition: 0.3s;
+        }
+        
+        div.stButton > button:not([data-baseweb="tab"]):hover {
+            background-color: #e65c00 !important;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        /* --- FLASHING ANIMATIONS --- */
+        @keyframes pulse-red-border {
+            0% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(211, 47, 47, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); }
+        }
+        
+        @keyframes critical-glow {
+            0% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
+            50% { background-color: rgba(211, 47, 47, 0.35); border-color: rgba(211, 47, 47, 1); }
+            100% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
+        }
+
+        .flashing-kpi {
+            animation: pulse-red-border 2s infinite;
+            border: 2px solid #D32F2F !important;
+        }
+
+        .critical-alert-box {
+            animation: critical-glow 1.5s infinite;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #D32F2F;
+            color: #D32F2F;
+            font-weight: 800;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 1.1rem;
+        }
+
         html, body, [class*="css"] {
             font-family: 'Inter', sans-serif;
             font-size: 0.8rem !important;
@@ -63,12 +124,6 @@ def apply_styles():
         [data-testid="stSidebar"] p,
         [data-testid="stSidebar"] h3 {
             color: white !important;
-        }
-
-        button {
-            background-color: #FF6600 !important;
-            color: white !important;
-            border-radius: 6px !important;
         }
 
         .header-box {
@@ -110,9 +165,10 @@ def apply_styles():
     </style>
     """, unsafe_allow_html=True)
 
-def kpi_card(label, value, color="#FF6600"):
+def kpi_card(label, value, color="#FF6600", flash=False):
+    flash_class = "flashing-kpi" if flash else ""
     st.markdown(f'''
-        <div class="kpi-wrapper" style="border-top: 3px solid {color};">
+        <div class="kpi-wrapper {flash_class}" style="border-top: 3px solid {color};">
             <p class="kpi-label">{label}</p>
             <p class="kpi-value" style="color: {color};">{value}</p>
         </div>
@@ -277,8 +333,13 @@ tto_breach_pct = (tto_breach_count / total_v) * 100
 ttr_breach_pct = (ttr_breach_count / total_v) * 100
 
 # --- MAIN INTERFACE ---
+# POPUP FLASHER FOR CRITICAL ALERT
 if aged_count > 0:
-    st.error(f"⚠️ CRITICAL ALERT: {aged_count} Pending tickets have been open for more than 30 days!")
+    st.markdown(f'''
+        <div class="critical-alert-box">
+            ⚠️ CRITICAL ALERT: {aged_count} Pending tickets have been open for more than 30 days!
+        </div>
+    ''', unsafe_allow_html=True)
 
 st.markdown(f'<div class="header-box"><h2>CXP ANALYTICS: {selected_unit.upper()}</h2></div>', unsafe_allow_html=True)
 
@@ -307,7 +368,10 @@ with tab1:
     st.write("### Overall Metrics")
     c9, c10, c11, _ = st.columns([1,1,1,1])
     with c9: kpi_card("Total Volume", len(df), color="#1F3B4D")
-    with c10: kpi_card("Total Backlog", backlog_val, color="#1F3B4D")
+    
+    # POPUP FLASHER FOR TOTAL BACKLOG (if > 0)
+    with c10: kpi_card("Total Backlog", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
+    
     with c11: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
 
     # Status Breakdown Row
