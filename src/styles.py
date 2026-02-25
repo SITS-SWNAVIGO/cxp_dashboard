@@ -1,245 +1,122 @@
-# src/styles.py
 import streamlit as st
-import os
 
-def set_style():
-    """Analytics BI – Bank-grade CXP Analytics UI (Elegant, Modern, Big Fonts)"""
+def apply_elegant_blue_theme():
+    """
+    Applies an elegant enterprise theme with a dark blue sidebar.
+    """
     st.markdown("""
     <style>
+        /* Main App Background */
+        .stApp {
+            background-color: #F4F9FF;
+            color: #002D62;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
 
-    /* ==============================
-       GLOBAL APP
-    ============================== */
-    .stApp {
-        background-color: #FFFFFF;
-        color: #0A1F44;
-        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    }
+        /* Top Navigation/Header Bar */
+        .header-container {
+            background-color: #002D62;
+            padding: 20px 30px;
+            border-radius: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            border-bottom: 5px solid #00A3E0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
 
-    /* ==============================
-       PAGE TITLES
-    ============================== */
-    .page-title {
-        font-size: 4rem;
-        font-weight: 900;
-        letter-spacing: 1px;
-        margin-bottom: 12px;
-        color: #0A1F44;
-        border-bottom: 5px solid #FF9C33;
-        padding-bottom: 12px;
-    }
+        /* --- UPDATED SIDEBAR STYLING --- */
+        [data-testid="stSidebar"] {
+            background-color: #002D62; /* Dark Blue Background */
+            color: #FFFFFF;
+        }
 
-    .page-subtitle {
-        font-size: 1.5rem;
-        font-weight: 600;
-        color: #4B5D6B;
-        margin-bottom: 28px;
-    }
+        /* Sidebar Text and Labels */
+        [data-testid="stSidebar"] .stMarkdown, 
+        [data-testid="stSidebar"] label, 
+        [data-testid="stSidebar"] .stSelectbox div {
+            color: #FFFFFF !important;
+        }
 
-    .section-title {
-        font-size: 2rem;
-        font-weight: 800;
-        margin-top: 28px;
-        margin-bottom: 12px;
-        color: #0A1F44;
-        border-bottom: 3px solid #FFB84D;
-        padding-bottom: 8px;
-    }
+        /* Sidebar Slider Tracks and Buttons */
+        [data-testid="stSidebar"] .stButton>button {
+            background-color: #00A3E0;
+            color: white;
+            border: 1px solid #00A3E0;
+        }
+        
+        [data-testid="stSidebar"] .stButton>button:hover {
+            background-color: #FFFFFF;
+            color: #002D62;
+        }
+        /* ------------------------------- */
 
-    /* ==============================
-       BODY TEXT
-    ============================== */
-    p, span, label, td {
-        font-size: 1.15rem !important;
-        font-weight: 500;
-        color: #0A1F44;
-    }
+        /* KPI Card Design */
+        .kpi-card {
+            background-color: #FFFFFF;
+            padding: 25px;
+            border-radius: 12px;
+            border-top: 4px solid #00A3E0;
+            box-shadow: 0 5px 15px rgba(0,45,98,0.08);
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+        
+        .kpi-card:hover {
+            transform: translateY(-5px);
+        }
 
-    /* ==============================
-       KPI CARDS
-    ============================== */
-    .kpi-card {
-        background-color: #FFB84D;
-        border-left: 6px solid #FF9C33;
-        border-radius: 16px;
-        padding: 22px;
-        text-align: center;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-        margin-bottom: 16px;
-        transition: transform 0.25s ease, box-shadow 0.25s ease;
-    }
+        .kpi-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #506784;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
 
-    .kpi-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-    }
+        .kpi-value {
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: #002D62 !important;
+            margin: 0;
+        }
 
-    .kpi-title {
-        font-size: 1.25rem;
-        font-weight: 700;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        margin-bottom: 8px;
-        color: #0A1F44;
-    }
+        /* Professional Buttons (Main Area) */
+        .stButton>button {
+            background-color: #002D62;
+            color: #FFFFFF;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            width: 100%;
+            padding: 0.6rem;
+            transition: all 0.3s ease;
+        }
 
-    .kpi-card h2 {
-        font-size: 2.8rem;
-        font-weight: 900;
-        margin: 0;
-    }
+        .stButton>button:hover {
+            background-color: #00A3E0;
+            color: white;
+            box-shadow: 0 4px 12px rgba(0,163,224,0.3);
+        }
 
-    /* ==============================
-       DATAFRAMES
-    ============================== */
-    .stDataFrame {
-        border-radius: 12px;
-        box-shadow: 0 6px 18px rgba(0,0,0,0.12);
-        overflow: hidden;
-    }
+        /* Section Headings */
+        .section-header {
+            color: #002D62;
+            font-weight: 700;
+            font-size: 1.2rem;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            border-left: 5px solid #00A3E0;
+            padding-left: 15px;
+            text-transform: uppercase;
+        }
 
-    .stDataFrame th {
-        background-color: #FF9C33;
-        color: white;
-        padding: 12px;
-        font-weight: 700;
-        font-size: 1.15rem;
-        text-align: center;
-    }
-
-    .stDataFrame td {
-        padding: 10px;
-        font-size: 1.1rem;
-    }
-
-    /* ==============================
-       SIDEBAR
-    ============================== */
-    section[data-testid="stSidebar"] {
-        background-color: #FFB84D;
-        border-right: 3px solid #FF9C33;
-        padding-top: 1rem;
-    }
-
-    section[data-testid="stSidebar"] * {
-        font-size: 1.1rem !important;
-        font-weight: 600 !important;
-    }
-
-    /* ==============================
-       INPUTS / SELECT / TEXTAREA (Sidebar)
-    ============================== */
-    section[data-testid="stSidebar"] input, 
-    section[data-testid="stSidebar"] select, 
-    section[data-testid="stSidebar"] textarea {
-        font-size: 1.15rem !important;
-        padding: 0.6rem !important;
-        border-radius: 12px !important;
-        border: 1px solid #FFB84D !important;
-        color: white !important;           /* typed text white */
-        font-weight: 600 !important;
-    }
-
-    section[data-testid="stSidebar"] input::placeholder,
-    section[data-testid="stSidebar"] select::placeholder,
-    section[data-testid="stSidebar"] textarea::placeholder {
-        color: white !important;           /* placeholder white */
-        opacity: 1 !important;
-        font-weight: 600 !important;
-    }
-
-    /* ==============================
-       BUTTONS
-    ============================== */
-    button {
-        background-color: #FFB84D !important;
-        color: #0A1F44 !important;
-        font-weight: 700 !important;
-        border-radius: 12px !important;
-        padding: 0.65rem 1.25rem !important;
-        border: none !important;
-        font-size: 1.1rem !important;
-        transition: all 0.2s ease;
-    }
-
-    button:hover {
-        background-color: #FF9C33 !important;
-        transform: translateY(-2px);
-    }
-
-    /* ==============================
-       TOGGLE CHECKBOXES (Sidebar)
-    ============================== */
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] > label {
-        display: flex !important;
-        justify-content: space-between !important;
-        align-items: center !important;
-        background-color: #FFB84D !important;
-        padding: 10px 14px !important;
-        border-radius: 16px !important;
-        font-size: 1.1rem !important;
-        font-weight: 700 !important;
-        margin-bottom: 8px !important;
-    }
-
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] input {
-        appearance: none !important;
-        width: 44px !important;
-        height: 24px !important;
-        background-color: #e6e6e6 !important;
-        border-radius: 999px !important;
-        position: relative !important;
-        cursor: pointer !important;
-        transition: background-color 0.25s ease !important;
-    }
-
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] input::before {
-        content: "" !important;
-        position: absolute !important;
-        width: 20px !important;
-        height: 20px !important;
-        top: 2px !important;
-        left: 2px !important;
-        background-color: white !important;
-        border-radius: 50% !important;
-        transition: transform 0.25s ease !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important;
-    }
-
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] input:checked {
-        background-color: #FF9C33 !important;
-    }
-
-    section[data-testid="stSidebar"] div[data-testid="stCheckbox"] input:checked::before {
-        transform: translateX(20px) !important;
-    }
-
-    /* ==============================
-       PAGE PADDING
-    ============================== */
-    .block-container {
-        padding-top: 3.5rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
-
+        /* Remove Streamlit branding */
+        #MainMenu, footer, header {
+            visibility: hidden;
+        }
     </style>
-    """, unsafe_allow_html=True)
-
-
-def show_logo():
-    """Display Analytics BI logo centered, without expander icon"""
-    logo_path = os.path.join(os.getcwd(), "assets", "logo.png")
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=180)
-    st.markdown("<div style='margin-bottom:1.5rem'></div>", unsafe_allow_html=True)
-
-
-def kpi_card(title, value, color="#FFB84D"):
-    """Custom KPI card"""
-    st.markdown(f"""
-        <div class="kpi-card" style="border-left-color:{color}">
-            <div class="kpi-title">{title}</div>
-            <h2>{value}</h2>
-        </div>
     """, unsafe_allow_html=True)

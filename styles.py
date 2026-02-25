@@ -4,16 +4,16 @@ from PIL import Image
 import os
 
 def set_style():
-    """Apply Cyan-Green Power BI Style Theme"""
+    """Apply Modern Orange Power BI Style Theme"""
     st.markdown(
         """
         <style>
 
         /* ===============================
-           GLOBAL BACKGROUND (CYAN → GREEN)
+           GLOBAL BACKGROUND (ORANGE GRADIENT)
         ===============================*/
         .stApp {
-            background: linear-gradient(135deg, #00C9A7, #2EE59D);
+            background: linear-gradient(135deg, #FFB84D, #FF7A18);
             color: #0F172A;
             font-family: 'Segoe UI', sans-serif;
         }
@@ -27,7 +27,7 @@ def set_style():
         }
 
         h1 {
-            border-bottom: 3px solid #0EA5A4;
+            border-bottom: 3px solid #FF7A18;
             padding-bottom: 8px;
             margin-bottom: 20px;
         }
@@ -36,7 +36,7 @@ def set_style():
            DESCRIPTION TEXT
         ===============================*/
         .stMarkdown p {
-            color: #064E3B;
+            color: #7C2D12;
             font-size: 14px;
         }
 
@@ -44,24 +44,24 @@ def set_style():
            KPI CARDS
         ===============================*/
         .kpi-card {
-            background-color: #ECFEFF;
+            background-color: #FFF7ED;
             border-radius: 10px;
             padding: 18px;
             text-align: center;
             box-shadow: 0 6px 14px rgba(0,0,0,0.15);
-            border-left: 6px solid #14B8A6;
+            border-left: 6px solid #FF7A18;
             margin-bottom: 16px;
         }
 
         .kpi-card h4 {
             font-size: 13px;
-            color: #047857;
+            color: #9A3412;
             margin-bottom: 6px;
         }
 
         .kpi-card h2 {
             font-size: 30px;
-            color: #0F766E;
+            color: #EA580C;
             margin: 0;
         }
 
@@ -69,7 +69,7 @@ def set_style():
            DATAFRAMES
         ===============================*/
         .stDataFrame {
-            background-color: #ECFEFF;
+            background-color: #FFF7ED;
             border-radius: 10px;
             padding: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -82,7 +82,7 @@ def set_style():
         }
 
         .stDataFrame th {
-            background-color: #0EA5A4;
+            background-color: #FF7A18;
             color: white;
             padding: 10px;
             text-align: left;
@@ -91,41 +91,41 @@ def set_style():
 
         .stDataFrame td {
             padding: 8px;
-            border-bottom: 1px solid #A7F3D0;
-            color: #064E3B;
+            border-bottom: 1px solid #FED7AA;
+            color: #7C2D12;
         }
 
         .stDataFrame tr:nth-child(even) {
-            background-color: #D1FAE5;
+            background-color: #FFE4C7;
         }
 
         .stDataFrame tr:hover {
-            background-color: #99F6E4;
+            background-color: #FFD199;
         }
 
         /* ===============================
-           SIDEBAR (SLICERS)
+           SIDEBAR
         ===============================*/
         section[data-testid="stSidebar"] {
-            background-color: #ECFEFF;
-            border-right: 2px solid #5EEAD4;
+            background-color: #FFF7ED;
+            border-right: 2px solid #FDBA74;
         }
 
         /* ===============================
            INPUTS
         ===============================*/
         input, textarea, select {
-            background-color: #F0FDFA !important;
-            color: #064E3B !important;
+            background-color: #FFF7ED !important;
+            color: #7C2D12 !important;
             border-radius: 6px !important;
-            border: 1px solid #5EEAD4 !important;
+            border: 1px solid #FDBA74 !important;
         }
 
         /* ===============================
            BUTTONS
         ===============================*/
         button {
-            background: linear-gradient(135deg, #06B6D4, #22C55E) !important;
+            background: linear-gradient(135deg, #FF7A18, #FFB84D) !important;
             color: white !important;
             border-radius: 8px !important;
             padding: 0.55em 1.4em !important;
@@ -135,7 +135,7 @@ def set_style():
         }
 
         button:hover {
-            background: linear-gradient(135deg, #0891B2, #16A34A) !important;
+            background: linear-gradient(135deg, #EA580C, #FB923C) !important;
             box-shadow: 0 6px 16px rgba(0,0,0,0.25);
             transform: translateY(-1px);
         }
@@ -144,11 +144,11 @@ def set_style():
            DOWNLOAD BUTTONS
         ===============================*/
         div.stDownloadButton > button {
-            background: linear-gradient(135deg, #16A34A, #22C55E) !important;
+            background: linear-gradient(135deg, #EA580C, #FB923C) !important;
         }
 
         div.stDownloadButton > button:hover {
-            background: linear-gradient(135deg, #15803D, #16A34A) !important;
+            background: linear-gradient(135deg, #C2410C, #EA580C) !important;
         }
 
         /* ===============================
@@ -165,6 +165,7 @@ def set_style():
         unsafe_allow_html=True
     )
 
+
 def show_logo():
     """Display a logo from assets folder"""
     logo_path = os.path.join(os.getcwd(), "assets", "logo.png")
@@ -174,8 +175,9 @@ def show_logo():
     except FileNotFoundError:
         st.warning("Logo file not found in assets/logo.png")
 
-def kpi_card(title, value, color="#14B8A6"):
-    """Cyan-Green KPI card"""
+
+def kpi_card(title, value, color="#FF7A18"):
+    """Orange KPI card"""
     st.markdown(f"""
         <div class="kpi-card" style="border-left-color:{color}">
             <h4>{title}</h4>
