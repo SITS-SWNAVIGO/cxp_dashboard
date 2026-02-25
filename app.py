@@ -365,7 +365,7 @@ def get_team_from_technician(name):
         "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
         "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
         "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
-        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna"
+        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna", "Rusith Tharanga Silva", "Duminda Dayasiri",
     ]
     gamma_it = [
         "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
@@ -448,6 +448,14 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
+import streamlit as st
+import pandas as pd
+import os
+import base64
+from io import BytesIO
+import requests
+from sqlalchemy import text
+
 # --- 2. LOGIN UI ---
 if not st.session_state.authenticated:
     st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
@@ -478,12 +486,21 @@ if not st.session_state.authenticated:
                 st.session_state.authenticated = True
                 st.session_state.user_role = role
                 st.session_state.username = input_user
+                
+                # --- MANAGER SPECIALIZED INTERFACE LOGIC ---
+                # Automatically load the latest data to skip the setup screen
+                if role == 'manager':
+                    db_df = load_from_db()
+                    if not db_df.empty:
+                        st.session_state.data = process_data_safely(db_df)
+                
                 st.rerun()
             else:
                 st.error("Invalid Username or Password")
     st.stop()
 
 # --- 3. POST-AUTHENTICATION DATA LOADING ---
+# Managers skip this if data was loaded during login
 if st.session_state.data.empty:
     nav_left, nav_right = st.columns([8, 2])
     with nav_right:
@@ -544,64 +561,80 @@ if st.session_state.data.empty:
                 else:
                     st.warning("No data available to load.")
 
-    # --- 4. SUPER ADMIN CONTROL PANEL ---
-    if st.session_state.user_role == "super_admin":
-        st.markdown("<br>", unsafe_allow_html=True)
-        with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=True):
-            # Reduced to 3 tabs: System Settings removed
-            t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
-            
-            with t1:
-                st.subheader("Add New Account")
-                nu, np = st.columns(2)
-                new_u = nu.text_input("Username", key="new_user_reg")
-                new_p = np.text_input("Password", type="password", key="new_pass_reg")
-                new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="new_role_reg")
-                if st.button("Create User Account", width="stretch"):
-                    if new_u and new_p:
-                        try:
-                            with engine.begin() as conn:
-                                conn.execute(
-                                    text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
-                                    {"u": new_u, "p": new_p, "r": new_r}
-                                )
-                            st.success(f"User {new_u} successfully created!")
-                        except:
-                            st.error("User creation failed. Username might already exist.")
-
-            with t2:
-                st.subheader("System Health")
-                if st.button("Test SMTP & DB Connection", width="stretch"):
+# --- 4. SUPER ADMIN CONTROL PANEL ---
+if st.session_state.user_role == "super_admin":
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=True):
+        t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
+        
+        with t1:
+            st.subheader("Add New Account")
+            nu, np = st.columns(2)
+            new_u = nu.text_input("Username", key="new_user_reg")
+            new_p = np.text_input("Password", type="password", key="new_pass_reg")
+            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="new_role_reg")
+            if st.button("Create User Account", width="stretch"):
+                if new_u and new_p:
                     try:
-                        with engine.connect() as conn:
-                            conn.execute(text("SELECT 1"))
-                        st.write("✅ Database: Connected")
-                    except Exception as e:
-                        st.error(f"Connection error: {e}")
+                        with engine.begin() as conn:
+                            conn.execute(
+                                text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
+                                {"u": new_u, "p": new_p, "r": new_r}
+                            )
+                        st.success(f"User {new_u} successfully created!")
+                    except:
+                        st.error("User creation failed. Username might already exist.")
 
-            with t3:
-                st.subheader("User Management")
+        with t2:
+            st.subheader("System Health")
+            if st.button("Test SMTP & DB Connection", width="stretch"):
                 try:
-                    users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
-                    if not users_df.empty:
-                        # Fix: Replaced width=None with use_container_width=True to fix the width error
-                        st.dataframe(users_df, use_container_width=True, hide_index=True)
-                        user_to_delete = st.selectbox("Select user to remove", options=users_df['username'].tolist())
-                        if user_to_delete != "admin":
-                            if st.button(f"DELETE USER: {user_to_delete}", type="primary", width="stretch"):
-                                with engine.begin() as conn:
-                                    conn.execute(text("DELETE FROM users WHERE username = :u"), {"u": user_to_delete})
-                                st.success(f"User '{user_to_delete}' removed.")
-                                st.rerun()
+                    with engine.connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                    st.write("✅ Database: Connected")
                 except Exception as e:
-                    st.error(f"Error loading users: {e}")
-            
-            # Exit button placed at the bottom of the expander
-            st.divider()
-            if st.button("EXIT ADMIN SESSION", width="stretch", key="exit_admin_btn"):
-                logout()
+                    st.error(f"Connection error: {e}")
 
+        with t3:
+            st.subheader("User Management")
+            try:
+                users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
+                if not users_df.empty:
+                    st.dataframe(users_df, use_container_width=True, hide_index=True)
+                    user_to_delete = st.selectbox("Select user to remove", options=users_df['username'].tolist())
+                    if user_to_delete != "admin":
+                        if st.button(f"DELETE USER: {user_to_delete}", type="primary", width="stretch"):
+                            with engine.begin() as conn:
+                                conn.execute(text("DELETE FROM users WHERE username = :u"), {"u": user_to_delete})
+                            st.success(f"User '{user_to_delete}' removed.")
+                            st.rerun()
+            except Exception as e:
+                st.error(f"Error loading users: {e}")
+        
+        st.divider()
+        if st.button("EXIT ADMIN SESSION", width="stretch", key="exit_admin_btn"):
+            logout()
+
+# --- THE FIX: DYNAMIC STOP ---
+# 1. Stop if no data is loaded (all roles)
+# 2. Stop if User is Admin/SuperAdmin (to keep them on the control panel)
+# 3. DO NOT stop for Managers if data is already loaded (they pass to dashboard)
+if st.session_state.data.empty or st.session_state.user_role in ['admin', 'super_admin']:
     st.stop()
+
+# --- 5. DASHBOARD CODE STARTS BELOW ---
+
+# Using a small, styled header instead of st.title
+st.markdown(f"""
+    <div style='padding: 10px; border-radius: 5px; background-color: #f0f2f6; margin-bottom: 20px;'>
+        <p style='margin: 0; font-size: 0.9rem; color: #666; font-weight: bold;'>
+            CXP DASHBOARD: <span style='color: #FF6600;'>{st.session_state.username}</span>
+        </p>
+    </div>
+""", unsafe_allow_html=True)
+
+# Your analytics charts and tables go here...
+
 # --- DATA PREP ---
 df_base = st.session_state.data.copy()
 org_col = next((c for c in ['Organization->Name', 'Organization'] if c in df_base.columns), "Organization")
@@ -615,10 +648,12 @@ with st.sidebar:
         st.image(LOGO_PATH, width=180)
         
     st.markdown("### DATA MANAGEMENT")
+    # This now expects the merged data or handles the logic via your process_data_safely
     new_data = st.file_uploader("Update SQL Database", type=['xlsx', 'csv'])
     if new_data:
         df_new = pd.read_csv(new_data, encoding='latin1') if new_data.name.endswith('.csv') else pd.read_excel(new_data)
-        processed_new = process_data_safely(df_new)
+        # Note: In your full script, ensure process_data_safely is updated to handle the mapping file merge
+        processed_new = process_data_safely(df_new) 
         save_to_db(processed_new)
         st.session_state.data = processed_new
         st.rerun()
@@ -628,7 +663,6 @@ with st.sidebar:
     
     # Date Filter
     selected_dates = None
-    # Using 'Date_Fixed' if created by your processing, otherwise falling back to 'Start date'
     d_col = 'Date_Fixed' if 'Date_Fixed' in df_base.columns else 'Start date'
     if d_col in df_base.columns:
         valid_dates = pd.to_datetime(df_base[d_col]).dropna()
@@ -636,22 +670,25 @@ with st.sidebar:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
             selected_dates = st.date_input("Select Range", value=(min_date, max_date))
 
-    # Unit Filter
-    units = ["All Departments", "SITS IT Support", "Gamma IT", "Service Desk"]
-    selected_unit = st.selectbox("Operational Unit", units)
+    # --- FIXED UNIT FILTER ---
+    # Instead of hardcoding, we pull unique teams from the 'Mapped_Team' column
+    if 'Mapped_Team' in df_base.columns:
+        available_teams = sorted(df_base['Mapped_Team'].dropna().unique().tolist())
+        unit_options = ["All Departments"] + available_teams
+    else:
+        unit_options = ["All Departments", "SITS IT Support", "Gamma IT", "Service Desk"]
     
-    # CUSTOMER FILTER (Using the Aggressive Mapping column)
-    # This ensures "Hela Clothing - Naula" etc. do NOT appear here.
+    selected_unit = st.selectbox("Operational Unit", unit_options)
+    
+    # CUSTOMER FILTER
     all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
     all_parents_options = ["All Customers"] + all_parents_list
     selected_org = st.selectbox("Select Customer", all_parents_options)
     
     st.markdown("### EXCLUSIONS")
-    # Using the same Parent_Company list for exclusions
     excluded_orgs = st.multiselect("Exclude Organizations", all_parents_list)
     
     # Agent Exclusions
-    # Ensure a_col is defined correctly before this block (e.g., a_col = "Agent")
     all_agents = sorted(df_base[a_col].dropna().unique().tolist()) if a_col in df_base.columns else []
     excluded_agents = st.multiselect("Exclude Agents", all_agents)
     
@@ -660,52 +697,53 @@ with st.sidebar:
         st.session_state.data = pd.DataFrame()
         st.rerun()
 
-## --- FILTERING ---
-# We wrap everything in a check to ensure data exists and user is logged in
+# --- FILTERING ---
 if not st.session_state.data.empty:
     df = df_base.copy()
 
-    # 1. Customer Filter
+    # 1. DATE RANGE FILTER (Moved to Top)
+    # This ensures all subsequent subsets (pending, aged, etc.) respect the selected dates
+    if selected_dates and len(selected_dates) == 2:
+        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+        df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
+                (df['Start date'].dt.date <= selected_dates[1])]
+
+    # 2. CUSTOMER & UNIT FILTERS
     if selected_org != "All Customers":
         df = df[df['Parent_Company'] == selected_org]
 
-    # 2. Status & Aged Logic
+    if selected_unit != "All Departments": 
+        team_col = 'Mapped_Team' if 'Mapped_Team' in df.columns else t_col
+        if team_col in df.columns:
+            df = df[df[team_col] == selected_unit]
+
+    # 3. EXCLUSIONS
+    if excluded_orgs:
+        df = df[~df['Parent_Company'].isin(excluded_orgs)]
+
+    if excluded_agents and a_col in df.columns:
+        df = df[~df[a_col].isin(excluded_agents)]
+
+    # 4. STATUS & AGED LOGIC (Calculated from the filtered 'df')
+    # Since 'df' is already date-filtered, df_pending will only contain tickets from that range
     one_month_ago = datetime.now() - timedelta(days=30)
     df_pending = pd.DataFrame()
     df_aged = pd.DataFrame()
 
     if 'Status' in df.columns:
         df_pending = df[df['Status'].astype(str).str.strip().str.lower() == 'pending']
-        if 'Start date' in df.columns:
-            # Ensure 'Start date' is datetime for comparison
-            temp_start_date = pd.to_datetime(df_pending['Start date'], errors='coerce')
-            df_aged = df_pending[temp_start_date < one_month_ago]
+        
+        # Ensure 'Start date' is datetime for aged comparison
+        df_pending['Start date'] = pd.to_datetime(df_pending['Start date'], errors='coerce')
+        df_aged = df_pending[df_pending['Start date'] < one_month_ago]
 
     backlog_val = len(df_pending)
     aged_count = len(df_aged)
 
-    # 3. Date Range Filter
-    if selected_dates and len(selected_dates) == 2:
-        # Convert column to date for a fair comparison with the picker
-        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-        df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
-                (df['Start date'].dt.date <= selected_dates[1])]
-
-    # 4. Unit Filter
-    if selected_unit != "All Departments" and t_col in df.columns: 
-        df = df[df[t_col] == selected_unit]
-
-    # 5. Organization Exclusions
-    if excluded_orgs:
-        df = df[~df['Parent_Company'].isin(excluded_orgs)]
-
-    # 6. Agent Exclusions
-    if excluded_agents and a_col in df.columns:
-        df = df[~df[a_col].isin(excluded_agents)]
-
 else:
-    # If no data is loaded, create empty variables so the rest of the app doesn't crash
     df = pd.DataFrame()
+    df_pending = pd.DataFrame()
+    df_aged = pd.DataFrame()
     backlog_val = 0
     aged_count = 0
 
@@ -925,20 +963,42 @@ class SITS_Report(FPDF):
         self.cell(0, 10, f'Confidential Strategic Document - Page {self.page_no()}', 0, 0, 'C')
 
 def generate_board_pdf(total_v, backlog, tto, ttr, aged, breaches, unit, dates, reasons):
-    pdf = SITS_Report()
+    from fpdf import FPDF
+    
+    # Internal helper to prevent 'latin-1' encoding crashes
+    def clean_text(s):
+        if not s:
+            return ""
+        # Replace common Excel/Word special characters with standard versions
+        replacements = {
+            '\u2013': '-', # En-dash
+            '\u2014': '-', # Em-dash
+            '\u2018': "'", # Left single quote
+            '\u2019': "'", # Right single quote
+            '\u201c': '"', # Left double quote
+            '\u201d': '"', # Right double quote
+            '\u2022': '*', # Bullet point
+        }
+        for unicode_char, safe_char in replacements.items():
+            s = str(s).replace(unicode_char, safe_char)
+        # Final safety: encode to latin-1 and ignore anything else remaining
+        return s.encode('latin-1', 'ignore').decode('latin-1')
+
+    pdf = FPDF()
     pdf.add_page()
     
     # Section I: Executive Overview
     pdf.set_font('Arial', 'B', 16)
     pdf.set_text_color(31, 59, 77)
-    pdf.cell(0, 10, f'Executive Summary: {unit}', 0, 1, 'L')
+    pdf.cell(0, 10, clean_text(f'Executive Summary: {unit}'), 0, 1, 'L')
     
     pdf.set_font('Arial', '', 11)
     pdf.set_text_color(50, 50, 50)
-    # Replaced special quotes/bullets with standard characters to prevent encoding errors
-    intro_text = (f"This comprehensive operational audit covers the period: {dates}. "
-                  f"The data reflects a total processing volume of {total_v:,} tickets. "
-                  "This report is intended for board-level review to assess resource efficiency and SLA adherence.")
+    intro_text = clean_text(
+        f"This operational audit covers the period: {dates}. "
+        f"Total processing volume: {total_v:,} tickets. "
+        "Intended for board-level review of resource efficiency and SLA adherence."
+    )
     pdf.multi_cell(0, 7, intro_text)
     pdf.ln(8)
 
@@ -963,10 +1023,10 @@ def generate_board_pdf(total_v, backlog, tto, ttr, aged, breaches, unit, dates, 
     ]
     
     for row in metrics:
-        pdf.cell(47, 10, row[0], 1)
-        pdf.cell(47, 10, row[1], 1, 0, 'C')
-        pdf.cell(47, 10, row[2], 1, 0, 'C')
-        pdf.cell(47, 10, row[3], 1, 1, 'C')
+        pdf.cell(47, 10, clean_text(row[0]), 1)
+        pdf.cell(47, 10, clean_text(row[1]), 1, 0, 'C')
+        pdf.cell(47, 10, clean_text(row[2]), 1, 0, 'C')
+        pdf.cell(47, 10, clean_text(row[3]), 1, 1, 'C')
     pdf.ln(10)
 
     # Section III: Risk Analysis
@@ -978,37 +1038,39 @@ def generate_board_pdf(total_v, backlog, tto, ttr, aged, breaches, unit, dates, 
     pdf.set_font('Arial', '', 11)
     pdf.set_text_color(0, 0, 0)
     
-    # Clean string encoding for reasons to avoid hidden characters
-    clean_reasons = str(reasons).replace("'", "").replace("[", "").replace("]", "")
-    risk_summary = (f"Analysis identifies {aged} aged tickets exceeding the 30-day threshold. "
-                    f"Additionally, {breaches:,} total SLA breaches were recorded. "
-                    f"Priority intervention is required for: {clean_reasons}")
+    clean_reasons = clean_text(reasons).replace("'", "").replace("[", "").replace("]", "")
+    risk_summary = clean_text(
+        f"Analysis identifies {aged} aged tickets exceeding the 30-day threshold. "
+        f"Total SLA breaches recorded: {breaches:,}. "
+        f"Priority intervention required for: {clean_reasons}"
+    )
     pdf.multi_cell(0, 7, risk_summary, 0, 'L', True)
     
-    # Return as safe latin-1 bytes
-    return pdf.output()
+    # Return as safe latin-1 bytes for Streamlit
+    return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-# --- 2. STREAMLIT UI CODE ---
 with tab4:
     st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
     st.caption(f"Operational Scope: {selected_unit}")
 
-    # Calculate Data
-    top_reasons_text = "No pending tickets."
+    # Derived solely from the date-filtered 'df' and 'df_pending'
+    current_total = len(df)
+    current_backlog = len(df_pending)
+    
+    top_reasons_text = "No pending tickets in this period."
     if not df_pending.empty and pr_col:
         top_reasons = df_pending[pr_col].value_counts().head(3).index.tolist()
         top_reasons_text = ", ".join(top_reasons)
 
-    # KPI Row
+    # Metric Row
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Volume", f"{total_v:,}")
-    m2.metric("Backlog", backlog_val)
+    m1.metric("Selected Volume", f"{current_total:,}")
+    m2.metric("Active Backlog", current_backlog)
     m3.metric("TTO %", f"{tto_perf_pct:.1f}%")
     m4.metric("TTR %", f"{ttr_perf_pct:.1f}%")
 
     st.divider()
 
-    # Cards Section
     c1, c2 = st.columns(2)
     with c1:
         st.error(f"**Critical Risks**\n- Aged Tickets: {aged_count}\n- SLA Breaches: {ttr_breach_count:,}")
@@ -1017,18 +1079,20 @@ with tab4:
 
     # PDF Download
     st.subheader("Board Meeting Assets")
-    date_range = f"{selected_dates[0]} to {selected_dates[1]}" if selected_dates else "N/A"
+    
+    # Format the date label for the report
+    date_label = f"{selected_dates[0]} to {selected_dates[1]}" if selected_dates else "All Time"
     
     pdf_output = generate_board_pdf(
-        total_v, backlog_val, tto_perf_pct, ttr_perf_pct, 
+        current_total, current_backlog, tto_perf_pct, ttr_perf_pct, 
         aged_count, ttr_breach_count, selected_unit, 
-        date_range, top_reasons_text
+        date_label, top_reasons_text
     )
 
     st.download_button(
         label="📄 DOWNLOAD BOARD-READY PDF BROCHURE",
         data=pdf_output,
-        file_name=f"SITS_Executive_Report_{datetime.now().strftime('%Y%m%d')}.pdf",
+        file_name=f"Executive_Report_{selected_unit}_{datetime.now().strftime('%Y%m%d')}.pdf",
         mime="application/pdf",
         use_container_width=True
     )
