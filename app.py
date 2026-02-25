@@ -986,7 +986,7 @@ def generate_board_pdf(total_v, backlog, tto, ttr, aged, breaches, unit, dates, 
     pdf.multi_cell(0, 7, risk_summary, 0, 'L', True)
     
     # Return as safe latin-1 bytes
-    return pdf.output(dest='S').encode('latin-1', 'ignore')
+    return pdf.output()
 
 # --- 2. STREAMLIT UI CODE ---
 with tab4:
