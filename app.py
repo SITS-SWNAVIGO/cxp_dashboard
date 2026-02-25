@@ -2,25 +2,75 @@ import streamlit as st
 import pandas as pd
 import requests
 import plotly.express as px
-from io import BytesIO
 import os
+from io import BytesIO
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
-# --- PAGE CONFIG ---
+# --- 1. PAGE CONFIGURATION ---
+# This MUST be the first Streamlit command
 st.set_page_config(
     page_title="SITS Analytics Portal", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
-# --- DATABASE SETUP ---
-DB_FILE = "sits_analytics.db"
-engine = create_engine(f"sqlite:///{DB_FILE}")
+# --- 2. DATABASE SETUP ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, "sits_analytics.db")
+
+# check_same_thread=False is essential for Streamlit's multi-threaded nature
+engine = create_engine(
+    f"sqlite:///{DB_FILE}", 
+    connect_args={"check_same_thread": False},
+    pool_pre_ping=True
+)
+
+# --- 3. SYSTEM INITIALIZATION ---
+def initialize_system():
+    """Initializes tables and creates the primary Super Admin account if missing."""
+    with engine.begin() as conn:
+        # Create User Authentication Table
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL
+            )
+        """))
+        
+        # Check if the Super User exists; if not, create it
+        admin_check = conn.execute(
+            text("SELECT 1 FROM users WHERE username = 'admin'")
+        ).fetchone()
+        
+        if not admin_check:
+            conn.execute(text("""
+                INSERT INTO users (username, password, role) 
+                VALUES ('admin', 'Admin@CXP', 'super_admin')
+            """))
+
+# Run initialization immediately
+initialize_system()
+
+# --- 4. DATA & AUTH FUNCTIONS ---
+
+def get_db_user(username, password):
+    """Authenticates credentials against the SQLite database."""
+    try:
+        with engine.connect() as conn:
+            query = text("SELECT role FROM users WHERE username = :u AND password = :p")
+            result = conn.execute(query, {"u": username, "p": password}).fetchone()
+            return result[0] if result else None
+    except Exception as e:
+        st.error(f"Authentication System Error: {e}")
+        return None
 
 def save_to_db(df):
+    """Saves the processed analytics dataframe to the database."""
     if df is not None and not df.empty:
         try:
+            # We use 'replace' to ensure the dashboard always shows the freshest sync
             df.to_sql("analytics_data", engine, if_exists="replace", index=False)
             return True
         except Exception as e:
@@ -28,23 +78,27 @@ def save_to_db(df):
     return False
 
 def load_from_db():
+    """Retrieves the stored analytics data."""
     try:
-        df = pd.read_sql("analytics_data", engine)
-        return df
+        with engine.connect() as conn:
+            return pd.read_sql(text("SELECT * FROM analytics_data"), conn)
     except:
         return pd.DataFrame()
 
 def get_db_last_updated():
-    if os.path.exists(DB_FILE):
-        timestamp = os.path.getmtime(DB_FILE)
-        time_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-        try:
-            df_count = pd.read_sql("SELECT COUNT(*) as count FROM analytics_data", engine)
-            count = df_count['count'].iloc[0]
-            return f"{time_str} ({count} Records)"
-        except:
-            return f"{time_str} (Data unavailable)"
-    return "No data found"
+    """Returns the last modified time and record count for the status bar."""
+    if not os.path.exists(DB_FILE):
+        return "No local database found"
+    
+    timestamp = os.path.getmtime(DB_FILE)
+    time_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+    
+    try:
+        with engine.connect() as conn:
+            count = conn.execute(text("SELECT COUNT(*) FROM analytics_data")).scalar()
+            return f"Last Sync: {time_str} ({count} Records)"
+    except:
+        return f"Modified: {time_str} (Storage empty)"
 
 # --- LOGO PATH ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -219,30 +273,87 @@ def kpi_card(label, value, color="#FF6600", flash=False):
 
 # --- CORPORATE MAPPING ---
 def get_parent_company(name):
+    """
+    Collapses individual branches and subsidiaries into a single Parent Conglomerate.
+    Uses 'Aggressive Keyword Detection' to catch typos (e.g., CLOTHIG) and branches.
+    """
     if pd.isna(name): return "Unassigned"
+    
+    # Standardize to uppercase and strip whitespace for matching
     n = str(name).strip().upper()
-    if any(x in n for x in ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT", "PH -"]): 
-        return "Gamma Pizzakraft"
-    if any(x in n for x in ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE", "FORTRESS RESORT"]): 
-        return "Vallibel One"
-    if any(x in n for x in ["AITKEN SPENCE", "HERITANCE", "ADAARAN", "TURYAA", "ELPITIYA PLANTATIONS"]): 
-        return "Aitken Spence"
-    if any(x in n for x in ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS", "MC DONALDS"]): 
-        return "Abans Group"
-    if any(x in n for x in ["KELLS", "KEELLS", "CINNAMON", "ELEPHANT HOUSE", "JKH", "UNION ASSURANCE"]): 
+    
+    # 1. HELA CLOTHING (Catches typos like 'CLOTHIG' and all branches)
+    if any(x in n for x in ["HELA", "INDIGLOW", "CLOTHIG"]): 
+        return "Hela Clothing"
+
+    # 2. CENTRAL FINANCE (Catches 'CF' prefixes, abbreviations, and full name)
+    if any(x in n for x in ["CENTRAL FINANCE", "CF ", "CF-"]) or n == "CF":
+        return "Central Finance"
+
+    # 3. MAJOR BANKS (Collapses all branches into a single Bank entity)
+    if "COMMERCIAL BANK" in n or "COMBANK" in n or "CBC " in n:
+        return "Commercial Bank"
+    if "SAMPATH" in n:
+        return "Sampath Bank"
+    if "HATTON NATIONAL" in n or "HNB" in n:
+        return "Hatton National Bank"
+    if "SEYLAN" in n:
+        return "Seylan Bank"
+    if "NATIONS TRUST" in n or " NTB" in n:
+        return "Nations Trust Bank"
+    if "PAN ASIA" in n:
+        return "Pan Asia Bank"
+    if "DFCC" in n:
+        return "DFCC Bank"
+
+    # 4. JOHN KEELLS GROUP (JKH)
+    if any(x in n for x in ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"]): 
         return "John Keells Group"
+
+    # 5. HAYLEYS GROUP
+    if any(x in n for x in ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"]): 
+        return "Hayleys Group"
+
+    # 6. LOLC / BROWNS GROUP
+    if any(x in n for x in ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"]): 
+        return "LOLC / Browns Group"
+
+    # 7. VALLIBEL ONE
+    if any(x in n for x in ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"]): 
+        return "Vallibel One"
+
+    # 8. CARGILLS GROUP
     if any(x in n for x in ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"]): 
         return "Cargills Group"
-    if any(x in n for x in ["SOFTLOGIC", "GLOMARK", "ASIRI", "ODEL", "SKECHERS", "BURGER KING"]): 
+
+    # 9. GAMMA PIZZAKRAFT (Pizza Hut / Taco Bell Branches)
+    if any(x in n for x in ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"]): 
+        return "Gamma Pizzakraft"
+
+    # 10. ABANS GROUP
+    if any(x in n for x in ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"]): 
+        return "Abans Group"
+
+    # 11. SOFTLOGIC
+    if any(x in n for x in ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"]): 
         return "Softlogic"
-    if any(x in n for x in ["HEMAS", "ATLAS AXILLIA", "MORISON", "J.L. MORISON"]): 
+
+    # 12. HEMAS HOLDINGS
+    if any(x in n for x in ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"]): 
         return "Hemas Holdings"
-    if any(x in n for x in ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "AMAYA"]): 
-        return "Hayleys Group"
+
+    # 13. APPAREL GIANTS
+    if any(x in n for x in ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"]): 
+        return "MAS Holdings"
+    if "BRANDIX" in n or "FORTUDE" in n: 
+        return "Brandix"
+
+    # 14. INTERNAL
     if any(x in n for x in ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"]): 
         return "SITS Internal"
+        
+    # Return original name if no keyword matches
     return str(name).strip()
-
 # --- TECHNICIAN TEAM MAPPING ---
 def get_team_from_technician(name):
     sits_support = [
@@ -302,56 +413,100 @@ def process_data_safely(df):
     if 'Ref' not in df.columns: df['Ref'] = range(len(df))
     return df
 
-apply_styles()
+import streamlit as st
+import pandas as pd
+import os
+import base64
+import requests
+from io import BytesIO
+from sqlalchemy import text
 
-# --- LOGIN & DATABASE CONNECTION ---
-if st.session_state.data.empty:
+# --- 1. INITIALIZATION ---
+def initialize_session():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "user_role" not in st.session_state:
+        st.session_state.user_role = None
+    if "username" not in st.session_state:
+        st.session_state.username = None
+    if "data" not in st.session_state:
+        st.session_state.data = pd.DataFrame()
+
+initialize_session()
+
+# Apply custom CSS/Styles
+try:
+    apply_styles()
+except NameError:
+    pass
+
+# --- HELPER: LOGOUT FUNCTION ---
+def logout():
+    st.session_state.authenticated = False
+    st.session_state.user_role = None
+    st.session_state.username = None
+    st.session_state.data = pd.DataFrame()
+    st.rerun()
+
+# --- 2. LOGIN UI ---
+if not st.session_state.authenticated:
     st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
-    _, center_col, _ = st.columns([1, 1, 1])
+    _, center_col, _ = st.columns([1, 1.5, 1])
+    
     with center_col:
-        # Check if logo exists to display it
         logo_html = ""
-        if os.path.exists(LOGO_PATH):
-            import base64
-            def get_base64(bin_file):
-                with open(bin_file, 'rb') as f:
-                    data = f.read()
-                return base64.b64encode(data).decode()
-            
-            bin_str = get_base64(LOGO_PATH)
+        if 'LOGO_PATH' in globals() and os.path.exists(LOGO_PATH):
+            with open(LOGO_PATH, "rb") as f:
+                bin_str = base64.b64encode(f.read()).decode()
             logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:120px; margin-bottom:20px;">'
 
         st.markdown(f'''
-            <div style="text-align:center; margin-top:15vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+            <div style="text-align:center; margin-top:10vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
                 {logo_html}
                 <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
-                <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">SITS Analytics Gateway</p>
+                <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">Secure Access Portal</p>
             </div>
         ''', unsafe_allow_html=True)
         
-        last_update = get_db_last_updated()
-        st.markdown(f'''
-            <div style="text-align:center; margin-top:10px; margin-bottom:20px;">
-                <small style="color:#888;">System Storage: </small>
-                <strong style="color:#FF6600; font-size:0.8rem;">{last_update}</strong>
-            </div>
-        ''', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        input_user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
+        input_pass = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
+        
+        if st.button("LOGIN", width="stretch"):
+            role = get_db_user(input_user, input_pass)
+            if role:
+                st.session_state.authenticated = True
+                st.session_state.user_role = role
+                st.session_state.username = input_user
+                st.rerun()
+            else:
+                st.error("Invalid Username or Password")
+    st.stop()
 
-        pwd = st.text_input("Access Key", type="password", placeholder="Enter Access Key", label_visibility="collapsed")
+# --- 3. POST-AUTHENTICATION DATA LOADING ---
+if st.session_state.data.empty:
+    nav_left, nav_right = st.columns([8, 2])
+    with nav_right:
+        if st.button("⬅ LOGOUT / BACK", width="stretch"):
+            logout()
+
+    _, center_col, _ = st.columns([1, 2, 1])
+    with center_col:
+        last_update = get_db_last_updated()
+        st.info(f"System Storage: {last_update}")
         
-        if pwd == "Admin@CXP":
+        if st.session_state.user_role in ['super_admin', 'admin']:
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("RESTORE FROM DB", use_container_width=True):
+                if st.button("RESTORE FROM DATABASE", width="stretch"):
                     db_df = load_from_db()
                     if not db_df.empty:
                         st.session_state.data = process_data_safely(db_df)
                         st.rerun()
                     else:
                         st.error("No database record found.")
-            
             with c2:
-                login_up = st.file_uploader("Upload & Save", type=['xlsx', 'csv'], label_visibility="collapsed")
+                login_up = st.file_uploader("Upload New Data", type=['xlsx', 'csv'], label_visibility="collapsed")
                 if login_up:
                     try:
                         df_up = pd.read_csv(login_up, encoding='latin1') if login_up.name.endswith('.csv') else pd.read_excel(login_up)
@@ -361,29 +516,92 @@ if st.session_state.data.empty:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Upload error: {e}")
-
-            st.markdown("---")
-            if st.button("CONNECT TO WEB SYNC", use_container_width=True):
+            
+            st.divider()
+            if st.button("CONNECT TO LIVE WEB SYNC", width="stretch", type="primary"):
                 try:
-                    url = "https://cxp.sits.lk/webservices/export-v2.php?format=spreadsheet&query=15"
-                    res = requests.get(url, auth=("malki.p", "Abc@1234"), verify=False)
+                    res = requests.get(
+                        "https://cxp.sits.lk/webservices/export-v2.php?format=spreadsheet&query=15", 
+                        auth=(st.secrets["api"]["user"], st.secrets["api"]["password"]), 
+                        verify=False, 
+                        timeout=30
+                    )
                     if res.status_code == 200:
-                        content = BytesIO(res.content)
-                        try:
-                            new_df = pd.read_excel(content, engine='openpyxl')
-                        except:
-                            content.seek(0)
-                            new_df = pd.read_csv(content, encoding='latin1')
-                        processed_df = process_data_safely(new_df)
-                        save_to_db(processed_df)
-                        st.session_state.data = processed_df
+                        new_df = pd.read_excel(BytesIO(res.content), engine='openpyxl')
+                        st.session_state.data = process_data_safely(new_df)
+                        save_to_db(st.session_state.data)
                         st.rerun()
                     else:
-                        st.error(f"Sync failed. Status: {res.status_code}")
+                        st.error(f"Sync failed. Server responded with: {res.status_code}")
                 except Exception as e:
-                    st.error(f"Connection error: {e}")
-    st.stop()
+                    st.error(f"Sync Error: {e}")
+        else:
+            if st.button("LOAD ANALYTICS VIEW", width="stretch"):
+                db_df = load_from_db()
+                if not db_df.empty:
+                    st.session_state.data = process_data_safely(db_df)
+                    st.rerun()
+                else:
+                    st.warning("No data available to load.")
 
+    # --- 4. SUPER ADMIN CONTROL PANEL ---
+    if st.session_state.user_role == "super_admin":
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=True):
+            # Reduced to 3 tabs: System Settings removed
+            t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
+            
+            with t1:
+                st.subheader("Add New Account")
+                nu, np = st.columns(2)
+                new_u = nu.text_input("Username", key="new_user_reg")
+                new_p = np.text_input("Password", type="password", key="new_pass_reg")
+                new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="new_role_reg")
+                if st.button("Create User Account", width="stretch"):
+                    if new_u and new_p:
+                        try:
+                            with engine.begin() as conn:
+                                conn.execute(
+                                    text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
+                                    {"u": new_u, "p": new_p, "r": new_r}
+                                )
+                            st.success(f"User {new_u} successfully created!")
+                        except:
+                            st.error("User creation failed. Username might already exist.")
+
+            with t2:
+                st.subheader("System Health")
+                if st.button("Test SMTP & DB Connection", width="stretch"):
+                    try:
+                        with engine.connect() as conn:
+                            conn.execute(text("SELECT 1"))
+                        st.write("✅ Database: Connected")
+                    except Exception as e:
+                        st.error(f"Connection error: {e}")
+
+            with t3:
+                st.subheader("User Management")
+                try:
+                    users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
+                    if not users_df.empty:
+                        # Fix: Replaced width=None with use_container_width=True to fix the width error
+                        st.dataframe(users_df, use_container_width=True, hide_index=True)
+                        user_to_delete = st.selectbox("Select user to remove", options=users_df['username'].tolist())
+                        if user_to_delete != "admin":
+                            if st.button(f"DELETE USER: {user_to_delete}", type="primary", width="stretch"):
+                                with engine.begin() as conn:
+                                    conn.execute(text("DELETE FROM users WHERE username = :u"), {"u": user_to_delete})
+                                st.success(f"User '{user_to_delete}' removed.")
+                                st.rerun()
+                except Exception as e:
+                    st.error(f"Error loading users: {e}")
+            
+            # Exit button placed at the bottom of the expander
+            st.divider()
+            if st.button("EXIT ADMIN SESSION", width="stretch", key="exit_admin_btn"):
+                logout()
+
+    st.stop()
 # --- DATA PREP ---
 df_base = st.session_state.data.copy()
 org_col = next((c for c in ['Organization->Name', 'Organization'] if c in df_base.columns), "Organization")
@@ -393,7 +611,9 @@ t_col = 'Mapped_Team'
 
 # --- SIDEBAR ---
 with st.sidebar:
-    if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=180)
+    if os.path.exists(LOGO_PATH): 
+        st.image(LOGO_PATH, width=180)
+        
     st.markdown("### DATA MANAGEMENT")
     new_data = st.file_uploader("Update SQL Database", type=['xlsx', 'csv'])
     if new_data:
@@ -405,55 +625,89 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### FILTERS")
+    
+    # Date Filter
     selected_dates = None
-    if 'Start date' in df_base.columns:
-        valid_dates = df_base['Start date'].dropna()
+    # Using 'Date_Fixed' if created by your processing, otherwise falling back to 'Start date'
+    d_col = 'Date_Fixed' if 'Date_Fixed' in df_base.columns else 'Start date'
+    if d_col in df_base.columns:
+        valid_dates = pd.to_datetime(df_base[d_col]).dropna()
         if not valid_dates.empty:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
             selected_dates = st.date_input("Select Range", value=(min_date, max_date))
 
+    # Unit Filter
     units = ["All Departments", "SITS IT Support", "Gamma IT", "Service Desk"]
     selected_unit = st.selectbox("Operational Unit", units)
     
-    all_parents = ["All Customers"] + sorted(df_base['Parent_Company'].dropna().unique().tolist())
-    selected_org = st.selectbox("Select Customer (Grouped)", all_parents)
+    # CUSTOMER FILTER (Using the Aggressive Mapping column)
+    # This ensures "Hela Clothing - Naula" etc. do NOT appear here.
+    all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
+    all_parents_options = ["All Customers"] + all_parents_list
+    selected_org = st.selectbox("Select Customer", all_parents_options)
     
     st.markdown("### EXCLUSIONS")
-    orgs_for_exclusion = sorted(df_base['Parent_Company'].dropna().unique().tolist())
-    excluded_orgs = st.multiselect("Exclude Organizations", orgs_for_exclusion)
+    # Using the same Parent_Company list for exclusions
+    excluded_orgs = st.multiselect("Exclude Organizations", all_parents_list)
     
+    # Agent Exclusions
+    # Ensure a_col is defined correctly before this block (e.g., a_col = "Agent")
     all_agents = sorted(df_base[a_col].dropna().unique().tolist()) if a_col in df_base.columns else []
     excluded_agents = st.multiselect("Exclude Agents", all_agents)
     
+    st.markdown("<br>", unsafe_allow_html=True)
     if st.button("LOGOUT SESSION", use_container_width=True):
         st.session_state.data = pd.DataFrame()
         st.rerun()
 
-# --- FILTERING ---
-df = df_base.copy()
-if selected_org != "All Customers":
-    df = df[df['Parent_Company'] == selected_org]
+## --- FILTERING ---
+# We wrap everything in a check to ensure data exists and user is logged in
+if not st.session_state.data.empty:
+    df = df_base.copy()
 
-one_month_ago = datetime.now() - timedelta(days=30)
-df_pending = pd.DataFrame()
-df_aged = pd.DataFrame()
+    # 1. Customer Filter
+    if selected_org != "All Customers":
+        df = df[df['Parent_Company'] == selected_org]
 
-if 'Status' in df.columns:
-    df_pending = df[df['Status'].astype(str).str.strip().str.lower() == 'pending']
-    if 'Start date' in df.columns:
-        df_aged = df_pending[df_pending['Start date'] < one_month_ago]
+    # 2. Status & Aged Logic
+    one_month_ago = datetime.now() - timedelta(days=30)
+    df_pending = pd.DataFrame()
+    df_aged = pd.DataFrame()
 
-backlog_val = len(df_pending)
-aged_count = len(df_aged)
+    if 'Status' in df.columns:
+        df_pending = df[df['Status'].astype(str).str.strip().str.lower() == 'pending']
+        if 'Start date' in df.columns:
+            # Ensure 'Start date' is datetime for comparison
+            temp_start_date = pd.to_datetime(df_pending['Start date'], errors='coerce')
+            df_aged = df_pending[temp_start_date < one_month_ago]
 
-if selected_dates and len(selected_dates) == 2:
-    df = df[(df['Start date'].dt.date >= selected_dates[0]) & (df['Start date'].dt.date <= selected_dates[1])]
-if selected_unit != "All Departments": 
-    df = df[df[t_col] == selected_unit]
-if excluded_orgs:
-    df = df[~df['Parent_Company'].isin(excluded_orgs)]
-if excluded_agents and a_col in df.columns:
-    df = df[~df[a_col].isin(excluded_agents)]
+    backlog_val = len(df_pending)
+    aged_count = len(df_aged)
+
+    # 3. Date Range Filter
+    if selected_dates and len(selected_dates) == 2:
+        # Convert column to date for a fair comparison with the picker
+        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+        df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
+                (df['Start date'].dt.date <= selected_dates[1])]
+
+    # 4. Unit Filter
+    if selected_unit != "All Departments" and t_col in df.columns: 
+        df = df[df[t_col] == selected_unit]
+
+    # 5. Organization Exclusions
+    if excluded_orgs:
+        df = df[~df['Parent_Company'].isin(excluded_orgs)]
+
+    # 6. Agent Exclusions
+    if excluded_agents and a_col in df.columns:
+        df = df[~df[a_col].isin(excluded_agents)]
+
+else:
+    # If no data is loaded, create empty variables so the rest of the app doesn't crash
+    df = pd.DataFrame()
+    backlog_val = 0
+    aged_count = 0
 
 # --- SLA CALCULATIONS ---
 total_v = len(df)
@@ -620,11 +874,11 @@ with tab3:
     parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).round(1)
     parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
     
-    st.write("#### Parent Group Ticket Distribution")
+    st.write("#### Top Customers by Parent Group")
     st.dataframe(parent_summary, use_container_width=True, hide_index=True)
     st.markdown("---")
     
-    st.write("#### Top Customers by Parent Group")
+    st.write("#### Parent Group Ticket Distribution")
     parent_list = sorted(df_base['Parent_Company'].unique().tolist())
     target_parent = st.selectbox("Select Parent Conglomerate", parent_list)
     
