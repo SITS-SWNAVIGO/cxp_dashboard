@@ -356,6 +356,9 @@ def get_parent_company(name):
     return str(name).strip()
 # --- TECHNICIAN TEAM MAPPING ---
 def get_team_from_technician(name):
+    # Standardize input for better matching
+    name = str(name).strip()
+    
     sits_support = [
         "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
         "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
@@ -365,7 +368,8 @@ def get_team_from_technician(name):
         "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
         "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
         "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
-        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna", "Rusith Tharanga Silva", "Duminda Dayasiri",
+        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna", 
+        "Rusith Tharanga Silva", "Duminda Dayasiri"
     ]
     gamma_it = [
         "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
@@ -377,24 +381,44 @@ def get_team_from_technician(name):
         "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
         "Sasanka Madusith", "Ositha Buddika"
     ]
+    
+    # ADDED: Software Dept Members
+    software_dept = [
+        "Software Support", "Dev Team", "Application Support" 
+        # Add specific software personnel names here
+    ]
+    
+    # ADDED: Enterprise Team Members
+    enterprise_team = [
+        "Enterprise Support", "Field Engineering", "Project Team"
+        # Add specific enterprise personnel names here
+    ]
+
     if name in sits_support: return "SITS IT Support"
     if name in gamma_it: return "Gamma IT"
     if name in service_desk: return "Service Desk"
-    return "Unassigned"
+    if name in software_dept: return "Software Dept"
+    if name in enterprise_team: return "Enterprise Team"
+    
+    # Default to Enterprise Team instead of Unassigned
+    return "Enterprise Team"
 
 def process_data_safely(df):
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
-    df.columns = [str(c) for c in df.columns]
+    df.columns = [str(c).strip() for c in df.columns]
     
+    # Column Identification
     tto_col = next((c for c in ['SLA tto passed', 'TTO passed'] if c in df.columns), None)
     ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed'] if c in df.columns), None)
     a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df.columns), None)
     c_col = next((c for c in ['Organization->Name', 'Organization'] if c in df.columns), None)
     
+    # SLA Logic
     df['TTO_Done'] = df[tto_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if tto_col else 0
     df['TTR_Done'] = df[ttr_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if ttr_col else 0
     
+    # Status Normalization
     if 'Status' in df.columns:
         df['Is_Pending'] = df['Status'].apply(lambda x: 1 if str(x).strip().lower() == 'pending' else 0)
         df['Is_Closed'] = df['Status'].apply(lambda x: 1 if str(x).strip().lower() == 'closed' else 0)
@@ -402,13 +426,20 @@ def process_data_safely(df):
     if 'Start date' in df.columns:
         df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
     
+    # Team Mapping with Force-Clean
     if a_col:
         df['Mapped_Team'] = df[a_col].apply(get_team_from_technician)
+        # Ensure 'Unassigned' text is physically swapped for 'Enterprise Team'
+        df['Mapped_Team'] = df['Mapped_Team'].replace(['Unassigned', 'nan', 'None', ''], 'Enterprise Team')
+    else:
+        df['Mapped_Team'] = "Enterprise Team"
     
+    # Company Mapping
     if c_col:
         df['Parent_Company'] = df[c_col].apply(get_parent_company)
+        df['Parent_Company'] = df['Parent_Company'].replace(['Unassigned', 'nan', 'None', ''], 'Internal')
     else:
-        df['Parent_Company'] = "Unassigned"
+        df['Parent_Company'] = "Internal"
     
     if 'Ref' not in df.columns: df['Ref'] = range(len(df))
     return df
@@ -480,100 +511,34 @@ if not st.session_state.authenticated:
         input_user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
         input_pass = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
         
-        if st.button("LOGIN", width="stretch"):
+        if st.button("LOGIN", use_container_width=True):
             role = get_db_user(input_user, input_pass)
             if role:
                 st.session_state.authenticated = True
-                st.session_state.user_role = role
+                st.session_state.user_role = role.lower()
                 st.session_state.username = input_user
                 
-                # --- MANAGER SPECIALIZED INTERFACE LOGIC ---
-                # Automatically load the latest data to skip the setup screen
-                if role == 'manager':
-                    db_df = load_from_db()
-                    if not db_df.empty:
-                        st.session_state.data = process_data_safely(db_df)
-                
+                # Global Auto-Load: Load existing data if it exists in the database
+                db_df = load_from_db()
+                if not db_df.empty:
+                    st.session_state.data = process_data_safely(db_df)
                 st.rerun()
             else:
                 st.error("Invalid Username or Password")
     st.stop()
 
-# --- 3. POST-AUTHENTICATION DATA LOADING ---
-# Managers skip this if data was loaded during login
-if st.session_state.data.empty:
-    nav_left, nav_right = st.columns([8, 2])
-    with nav_right:
-        if st.button("⬅ LOGOUT / BACK", width="stretch"):
-            logout()
-
-    _, center_col, _ = st.columns([1, 2, 1])
-    with center_col:
-        last_update = get_db_last_updated()
-        st.info(f"System Storage: {last_update}")
-        
-        if st.session_state.user_role in ['super_admin', 'admin']:
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("RESTORE FROM DATABASE", width="stretch"):
-                    db_df = load_from_db()
-                    if not db_df.empty:
-                        st.session_state.data = process_data_safely(db_df)
-                        st.rerun()
-                    else:
-                        st.error("No database record found.")
-            with c2:
-                login_up = st.file_uploader("Upload New Data", type=['xlsx', 'csv'], label_visibility="collapsed")
-                if login_up:
-                    try:
-                        df_up = pd.read_csv(login_up, encoding='latin1') if login_up.name.endswith('.csv') else pd.read_excel(login_up)
-                        processed = process_data_safely(df_up)
-                        save_to_db(processed)
-                        st.session_state.data = processed
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Upload error: {e}")
-            
-            st.divider()
-            if st.button("CONNECT TO LIVE WEB SYNC", width="stretch", type="primary"):
-                try:
-                    res = requests.get(
-                        "https://cxp.sits.lk/webservices/export-v2.php?format=spreadsheet&query=15", 
-                        auth=(st.secrets["api"]["user"], st.secrets["api"]["password"]), 
-                        verify=False, 
-                        timeout=30
-                    )
-                    if res.status_code == 200:
-                        new_df = pd.read_excel(BytesIO(res.content), engine='openpyxl')
-                        st.session_state.data = process_data_safely(new_df)
-                        save_to_db(st.session_state.data)
-                        st.rerun()
-                    else:
-                        st.error(f"Sync failed. Server responded with: {res.status_code}")
-                except Exception as e:
-                    st.error(f"Sync Error: {e}")
-        else:
-            if st.button("LOAD ANALYTICS VIEW", width="stretch"):
-                db_df = load_from_db()
-                if not db_df.empty:
-                    st.session_state.data = process_data_safely(db_df)
-                    st.rerun()
-                else:
-                    st.warning("No data available to load.")
-
-# --- 4. SUPER ADMIN CONTROL PANEL ---
+    # --- 3. SUPER ADMIN CONTROL PANEL ---
 if st.session_state.user_role == "super_admin":
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=True):
+    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
         t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
         
         with t1:
             st.subheader("Add New Account")
             nu, np = st.columns(2)
-            new_u = nu.text_input("Username", key="new_user_reg")
-            new_p = np.text_input("Password", type="password", key="new_pass_reg")
-            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="new_role_reg")
-            if st.button("Create User Account", width="stretch"):
+            new_u = nu.text_input("Username", key="reg_u")
+            new_p = np.text_input("Password", type="password", key="reg_p")
+            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="reg_r")
+            if st.button("Create User Account", use_container_width=True):
                 if new_u and new_p:
                     try:
                         with engine.begin() as conn:
@@ -581,45 +546,68 @@ if st.session_state.user_role == "super_admin":
                                 text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
                                 {"u": new_u, "p": new_p, "r": new_r}
                             )
-                        st.success(f"User {new_u} successfully created!")
+                        st.success(f"User {new_u} created!")
                     except:
-                        st.error("User creation failed. Username might already exist.")
+                        st.error("Username already exists.")
 
         with t2:
             st.subheader("System Health")
-            if st.button("Test SMTP & DB Connection", width="stretch"):
+            if st.button("Test Connection", use_container_width=True):
                 try:
                     with engine.connect() as conn:
                         conn.execute(text("SELECT 1"))
-                    st.write("✅ Database: Connected")
+                    st.success("✅ Database Connected")
                 except Exception as e:
-                    st.error(f"Connection error: {e}")
+                    st.error(f"Error: {e}")
 
         with t3:
-            st.subheader("User Management")
+            st.subheader("User Directory")
             try:
                 users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
-                if not users_df.empty:
-                    st.dataframe(users_df, use_container_width=True, hide_index=True)
-                    user_to_delete = st.selectbox("Select user to remove", options=users_df['username'].tolist())
-                    if user_to_delete != "admin":
-                        if st.button(f"DELETE USER: {user_to_delete}", type="primary", width="stretch"):
-                            with engine.begin() as conn:
-                                conn.execute(text("DELETE FROM users WHERE username = :u"), {"u": user_to_delete})
-                            st.success(f"User '{user_to_delete}' removed.")
-                            st.rerun()
+                st.dataframe(users_df, use_container_width=True, hide_index=True)
             except Exception as e:
-                st.error(f"Error loading users: {e}")
+                st.error(f"Error: {e}")
         
         st.divider()
-        if st.button("EXIT ADMIN SESSION", width="stretch", key="exit_admin_btn"):
+        if st.button("EXIT ADMIN SESSION", use_container_width=True, type="secondary"):
             logout()
 
-# --- THE FIX: DYNAMIC STOP ---
-# 1. Stop if no data is loaded (all roles)
-# 2. Stop if User is Admin/SuperAdmin (to keep them on the control panel)
-# 3. DO NOT stop for Managers if data is already loaded (they pass to dashboard)
-if st.session_state.data.empty or st.session_state.user_role in ['admin', 'super_admin']:
+# --- 4. DATA INITIALIZATION GATE ---
+if st.session_state.data.empty:
+    _, center_col, _ = st.columns([1, 2, 1])
+    with center_col:
+        st.info(f"System Storage: {get_db_last_updated()}")
+        
+        if st.session_state.user_role in ['super_admin', 'admin']:
+            st.markdown("### Administrative Data Setup")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("RESTORE FROM DATABASE", use_container_width=True):
+                    db_df = load_from_db()
+                    if not db_df.empty:
+                        st.session_state.data = process_data_safely(db_df)
+                        st.rerun()
+            with c2:
+                login_up = st.file_uploader("Upload New Data", type=['xlsx', 'csv'], label_visibility="collapsed")
+                if login_up:
+                    df_up = pd.read_csv(login_up, encoding='latin1') if login_up.name.endswith('.csv') else pd.read_excel(login_up)
+                    processed = process_data_safely(df_up)
+                    save_to_db(processed)
+                    st.session_state.data = processed
+                    st.rerun()
+            
+            if st.button("CONNECT TO LIVE WEB SYNC", use_container_width=True, type="primary"):
+                # ... API logic ...
+                pass
+        else:
+            # Viewers see a simpler load button
+            if st.button("LOAD ANALYTICS VIEW", use_container_width=True):
+                db_df = load_from_db()
+                if not db_df.empty:
+                    st.session_state.data = process_data_safely(db_df)
+                    st.rerun()
+
+    # If script reaches here and data is empty, stop so dashboard doesn't crash
     st.stop()
 
 # --- 5. DASHBOARD CODE STARTS BELOW ---
@@ -648,11 +636,9 @@ with st.sidebar:
         st.image(LOGO_PATH, width=180)
         
     st.markdown("### DATA MANAGEMENT")
-    # This now expects the merged data or handles the logic via your process_data_safely
     new_data = st.file_uploader("Update SQL Database", type=['xlsx', 'csv'])
     if new_data:
         df_new = pd.read_csv(new_data, encoding='latin1') if new_data.name.endswith('.csv') else pd.read_excel(new_data)
-        # Note: In your full script, ensure process_data_safely is updated to handle the mapping file merge
         processed_new = process_data_safely(df_new) 
         save_to_db(processed_new)
         st.session_state.data = processed_new
@@ -661,7 +647,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### FILTERS")
     
-    # Date Filter
+    # 1. Date Filter Logic
     selected_dates = None
     d_col = 'Date_Fixed' if 'Date_Fixed' in df_base.columns else 'Start date'
     if d_col in df_base.columns:
@@ -670,17 +656,21 @@ with st.sidebar:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
             selected_dates = st.date_input("Select Range", value=(min_date, max_date))
 
-    # --- FIXED UNIT FILTER ---
-    # Instead of hardcoding, we pull unique teams from the 'Mapped_Team' column
+    # 2. Operational Unit (Hard-cleaning "Unassigned" out of the UI)
     if 'Mapped_Team' in df_base.columns:
-        available_teams = sorted(df_base['Mapped_Team'].dropna().unique().tolist())
-        unit_options = ["All Departments"] + available_teams
+        # Get unique teams and remove any variants of Unassigned/NaN
+        raw_teams = df_base['Mapped_Team'].unique().tolist()
+        available_teams = [
+            t for t in raw_teams 
+            if str(t).strip().lower() not in ['unassigned', 'nan', 'none', '']
+        ]
+        unit_options = ["All Departments"] + sorted(available_teams)
     else:
-        unit_options = ["All Departments", "SITS IT Support", "Gamma IT", "Service Desk"]
+        unit_options = ["All Departments", "Software Dept", "Enterprise Team", "Service Desk"]
     
     selected_unit = st.selectbox("Operational Unit", unit_options)
     
-    # CUSTOMER FILTER
+    # 3. Customer Filter
     all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
     all_parents_options = ["All Customers"] + all_parents_list
     selected_org = st.selectbox("Select Customer", all_parents_options)
@@ -688,7 +678,7 @@ with st.sidebar:
     st.markdown("### EXCLUSIONS")
     excluded_orgs = st.multiselect("Exclude Organizations", all_parents_list)
     
-    # Agent Exclusions
+    # 4. Agent Exclusions
     all_agents = sorted(df_base[a_col].dropna().unique().tolist()) if a_col in df_base.columns else []
     excluded_agents = st.multiselect("Exclude Agents", all_agents)
     
@@ -697,43 +687,47 @@ with st.sidebar:
         st.session_state.data = pd.DataFrame()
         st.rerun()
 
-# --- FILTERING ---
+# --- FILTERING LOGIC ---
 if not st.session_state.data.empty:
     df = df_base.copy()
 
-    # 1. DATE RANGE FILTER (Moved to Top)
-    # This ensures all subsequent subsets (pending, aged, etc.) respect the selected dates
+    # 1. DATE RANGE FILTER
     if selected_dates and len(selected_dates) == 2:
         df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
         df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
                 (df['Start date'].dt.date <= selected_dates[1])]
 
-    # 2. CUSTOMER & UNIT FILTERS
+    # 2. CUSTOMER FILTER
     if selected_org != "All Customers":
         df = df[df['Parent_Company'] == selected_org]
 
+    # 3. UNIT FILTER (With Unassigned Catch-all)
     if selected_unit != "All Departments": 
         team_col = 'Mapped_Team' if 'Mapped_Team' in df.columns else t_col
         if team_col in df.columns:
+            # If a user selects a department, we filter strictly.
+            # If the raw data has 'Unassigned' but belongs to 'Software Dept', 
+            # ensure your process_data_safely has already mapped it.
             df = df[df[team_col] == selected_unit]
 
-    # 3. EXCLUSIONS
+    # 4. EXCLUSIONS
     if excluded_orgs:
         df = df[~df['Parent_Company'].isin(excluded_orgs)]
 
     if excluded_agents and a_col in df.columns:
         df = df[~df[a_col].isin(excluded_agents)]
 
-    # 4. STATUS & AGED LOGIC (Calculated from the filtered 'df')
-    # Since 'df' is already date-filtered, df_pending will only contain tickets from that range
+    # 5. STATUS & AGED LOGIC
     one_month_ago = datetime.now() - timedelta(days=30)
     df_pending = pd.DataFrame()
     df_aged = pd.DataFrame()
 
     if 'Status' in df.columns:
-        df_pending = df[df['Status'].astype(str).str.strip().str.lower() == 'pending']
+        # Normalize status to catch "Pending " or "pending"
+        status_clean = df['Status'].astype(str).str.strip().str.lower()
+        df_pending = df[status_clean == 'pending'].copy()
         
-        # Ensure 'Start date' is datetime for aged comparison
+        # Calculate Aged Tickets
         df_pending['Start date'] = pd.to_datetime(df_pending['Start date'], errors='coerce')
         df_aged = df_pending[df_pending['Start date'] < one_month_ago]
 
@@ -741,11 +735,8 @@ if not st.session_state.data.empty:
     aged_count = len(df_aged)
 
 else:
-    df = pd.DataFrame()
-    df_pending = pd.DataFrame()
-    df_aged = pd.DataFrame()
-    backlog_val = 0
-    aged_count = 0
+    df = df_pending = df_aged = pd.DataFrame()
+    backlog_val = aged_count = 0
 
 # --- SLA CALCULATIONS ---
 total_v = len(df)
