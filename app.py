@@ -275,85 +275,52 @@ def kpi_card(label, value, color="#FF6600", flash=False):
 def get_parent_company(name):
     """
     Collapses individual branches and subsidiaries into a single Parent Conglomerate.
-    Uses 'Aggressive Keyword Detection' to catch typos (e.g., CLOTHIG) and branches.
+    Uses 'Aggressive Keyword Detection' to catch typos and branches.
     """
-    if pd.isna(name): return "Unassigned"
+    if pd.isna(name): 
+        return "Unassigned"
     
     # Standardize to uppercase and strip whitespace for matching
     n = str(name).strip().upper()
     
-    # 1. HELA CLOTHING (Catches typos like 'CLOTHIG' and all branches)
-    if any(x in n for x in ["HELA", "INDIGLOW", "CLOTHIG"]): 
-        return "Hela Clothing"
+    # Mapping Dictionary: Key is the Parent Company, Value is a list of keywords
+    mappings = [
+        ("Hela Clothing", ["HELA", "INDIGLOW", "CLOTHIG"]),
+        ("Central Finance", ["CENTRAL FINANCE", "CF ", "CF-", "CF"]),
+        ("Commercial Bank", ["COMMERCIAL BANK", "COMBANK", "CBC "]),
+        ("Sampath Bank", ["SAMPATH"]),
+        ("Hatton National Bank", ["HATTON NATIONAL", "HNB"]),
+        ("Seylan Bank", ["SEYLAN"]),
+        ("Nations Trust Bank", ["NATIONS TRUST", " NTB"]),
+        ("Pan Asia Bank", ["PAN ASIA"]),
+        ("DFCC Bank", ["DFCC"]),
+        ("John Keells Group", ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"]),
+        ("Hayleys Group", ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"]),
+        ("LOLC / Browns Group", ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"]),
+        ("Vallibel One", ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"]),
+        ("Cargills Group", ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"]),
+        ("Gamma Pizzakraft", ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"]),
+        ("Abans Group", ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"]),
+        ("Softlogic", ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"]),
+        ("Hemas Holdings", ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"]),
+        ("MAS Holdings", ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"]),
+        ("Brandix", ["BRANDIX", "FORTUDE"]),
+        ("SITS Internal", ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"]),
+        ("IWS", [
+            "SWEDISH CARS", "PURE CEYLON BEVARAGE", "IWS LOGISTICS", 
+            "WINDCASTLE", "ART TV", "GERMANIA", "IWS HOLDINGS", 
+            "IWS INVESTEMENTS", "IWS AUTOMOBILES", "DYNACOM ELECTRONICS", "EUROCARS"
+        ])
+    ]
 
-    # 2. CENTRAL FINANCE (Catches 'CF' prefixes, abbreviations, and full name)
-    if any(x in n for x in ["CENTRAL FINANCE", "CF ", "CF-"]) or n == "CF":
-        return "Central Finance"
-
-    # 3. MAJOR BANKS (Collapses all branches into a single Bank entity)
-    if "COMMERCIAL BANK" in n or "COMBANK" in n or "CBC " in n:
-        return "Commercial Bank"
-    if "SAMPATH" in n:
-        return "Sampath Bank"
-    if "HATTON NATIONAL" in n or "HNB" in n:
-        return "Hatton National Bank"
-    if "SEYLAN" in n:
-        return "Seylan Bank"
-    if "NATIONS TRUST" in n or " NTB" in n:
-        return "Nations Trust Bank"
-    if "PAN ASIA" in n:
-        return "Pan Asia Bank"
-    if "DFCC" in n:
-        return "DFCC Bank"
-
-    # 4. JOHN KEELLS GROUP (JKH)
-    if any(x in n for x in ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"]): 
-        return "John Keells Group"
-
-    # 5. HAYLEYS GROUP
-    if any(x in n for x in ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"]): 
-        return "Hayleys Group"
-
-    # 6. LOLC / BROWNS GROUP
-    if any(x in n for x in ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"]): 
-        return "LOLC / Browns Group"
-
-    # 7. VALLIBEL ONE
-    if any(x in n for x in ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"]): 
-        return "Vallibel One"
-
-    # 8. CARGILLS GROUP
-    if any(x in n for x in ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"]): 
-        return "Cargills Group"
-
-    # 9. GAMMA PIZZAKRAFT (Pizza Hut / Taco Bell Branches)
-    if any(x in n for x in ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"]): 
-        return "Gamma Pizzakraft"
-
-    # 10. ABANS GROUP
-    if any(x in n for x in ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"]): 
-        return "Abans Group"
-
-    # 11. SOFTLOGIC
-    if any(x in n for x in ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"]): 
-        return "Softlogic"
-
-    # 12. HEMAS HOLDINGS
-    if any(x in n for x in ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"]): 
-        return "Hemas Holdings"
-
-    # 13. APPAREL GIANTS
-    if any(x in n for x in ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"]): 
-        return "MAS Holdings"
-    if "BRANDIX" in n or "FORTUDE" in n: 
-        return "Brandix"
-
-    # 14. INTERNAL
-    if any(x in n for x in ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"]): 
-        return "SITS Internal"
-        
+    # Iterative keyword matching
+    for parent, keywords in mappings:
+        if any(kw in n for kw in keywords):
+            return parent
+            
     # Return original name if no keyword matches
     return str(name).strip()
+
 # --- TECHNICIAN TEAM MAPPING ---
 def get_team_from_technician(name):
     # Standardize input for better matching
@@ -388,60 +355,71 @@ def get_team_from_technician(name):
         # Add specific software personnel names here
     ]
     
-    # ADDED: Enterprise Team Members
+# ADDED: Enterprise Team Members
     enterprise_team = [
-        "Enterprise Support", "Field Engineering", "Project Team"
-        # Add specific enterprise personnel names here
+        "Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"
     ]
 
+    # Mapping Logic: Matches names to specific Operational Units
     if name in sits_support: return "SITS IT Support"
     if name in gamma_it: return "Gamma IT"
     if name in service_desk: return "Service Desk"
     if name in software_dept: return "Software Dept"
     if name in enterprise_team: return "Enterprise Team"
     
-    # Default to Enterprise Team instead of Unassigned
-    return "Enterprise Team"
+    # Returning Unassigned allows you to see names that aren't mapped yet
+    return "Unassigned"
 
 def process_data_safely(df):
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
+    
+    # 1. Clean column headers
     df.columns = [str(c).strip() for c in df.columns]
     
-    # Column Identification
-    tto_col = next((c for c in ['SLA tto passed', 'TTO passed'] if c in df.columns), None)
-    ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed'] if c in df.columns), None)
-    a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df.columns), None)
-    c_col = next((c for c in ['Organization->Name', 'Organization'] if c in df.columns), None)
+    # 2. Dynamic Column Identification
+    tto_col = next((c for c in ['SLA tto passed', 'TTO passed', 'SLA tto p'] if c in df.columns), None)
+    ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed', 'SLA ttr p'] if c in df.columns), None)
+    a_col = next((c for c in ['Agent->Full name', 'Agent', 'Agent Name'] if c in df.columns), None)
+    c_col = next((c for c in ['Organization->Name', 'Organization', 'Organization Name'] if c in df.columns), None)
     
-    # SLA Logic
-    df['TTO_Done'] = df[tto_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if tto_col else 0
-    df['TTR_Done'] = df[ttr_col].apply(lambda x: 1 if str(x).strip().lower() == 'no' else 0) if ttr_col else 0
+    # 3. SLA Standardization (Checks for 'no', 'met', or 'within sla')
+    def check_sla(val):
+        v = str(val).strip().lower()
+        return 1 if v in ['no', 'met', 'within sla', 'achieved', 'yes'] else 0
+
+    df['TTO_Done'] = df[tto_col].apply(check_sla) if tto_col else 0
+    df['TTR_Done'] = df[ttr_col].apply(check_sla) if ttr_col else 0
     
-    # Status Normalization
-    if 'Status' in df.columns:
-        df['Is_Pending'] = df['Status'].apply(lambda x: 1 if str(x).strip().lower() == 'pending' else 0)
-        df['Is_Closed'] = df['Status'].apply(lambda x: 1 if str(x).strip().lower() == 'closed' else 0)
-    
+    # 4. Date & Status Handling
     if 'Start date' in df.columns:
         df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+        
+    if 'Status' in df.columns:
+        df['Status_Clean'] = df['Status'].astype(str).str.strip().str.lower()
+        df['Is_Pending'] = (df['Status_Clean'] == 'pending').astype(int)
+        df['Is_Closed'] = (df['Status_Clean'] == 'closed').astype(int)
     
-    # Team Mapping with Force-Clean
+    # 5. Mapped Team Logic (The Fix for Operational Units)
     if a_col:
+        # Assign the team based on the technician name
         df['Mapped_Team'] = df[a_col].apply(get_team_from_technician)
-        # Ensure 'Unassigned' text is physically swapped for 'Enterprise Team'
-        df['Mapped_Team'] = df['Mapped_Team'].replace(['Unassigned', 'nan', 'None', ''], 'Enterprise Team')
     else:
-        df['Mapped_Team'] = "Enterprise Team"
-    
-    # Company Mapping
+        df['Mapped_Team'] = "Unassigned"
+        
+    # 6. Company Mapping
     if c_col:
         df['Parent_Company'] = df[c_col].apply(get_parent_company)
-        df['Parent_Company'] = df['Parent_Company'].replace(['Unassigned', 'nan', 'None', ''], 'Internal')
     else:
         df['Parent_Company'] = "Internal"
     
-    if 'Ref' not in df.columns: df['Ref'] = range(len(df))
+    # 7. Final Cleanup: Ensure no NaN values in filtering columns
+    df['Mapped_Team'] = df['Mapped_Team'].fillna('Unassigned')
+    df['Parent_Company'] = df['Parent_Company'].fillna('Internal')
+    
+    if 'Ref' not in df.columns: 
+        df['Ref'] = range(len(df))
+        
     return df
 
 import streamlit as st
@@ -487,19 +465,8 @@ from io import BytesIO
 import requests
 from sqlalchemy import text
 
-# --- 1. PERSISTENT LOGOUT HEADER ---
-# This renders at the very top for all authenticated users, preventing "black screens"
-if st.session_state.get('authenticated'):
-    col_header, col_logout = st.columns([0.85, 0.15])
-    with col_logout:
-        if st.button("LOGOUT SESSION", key="main_logout", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-    st.divider()
-
 # --- 2. LOGIN UI ---
-if not st.session_state.get('authenticated'):
+if not st.session_state.authenticated:
     st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
     _, center_col, _ = st.columns([1, 1.5, 1])
     
@@ -529,7 +496,7 @@ if not st.session_state.get('authenticated'):
                 st.session_state.user_role = role.lower()
                 st.session_state.username = input_user
                 
-                # MANAGER & AUTO-LOAD: Skip setup by loading data immediately
+                # Global Auto-Load: Load existing data if it exists in the database
                 db_df = load_from_db()
                 if not db_df.empty:
                     st.session_state.data = process_data_safely(db_df)
@@ -538,20 +505,18 @@ if not st.session_state.get('authenticated'):
                 st.error("Invalid Username or Password")
     st.stop()
 
-# --- 3. SUPER ADMIN CONTROL PANEL ---
+    # --- 3. SUPER ADMIN CONTROL PANEL ---
 if st.session_state.user_role == "super_admin":
-    # The expander stays open if no analytics data is loaded, helping with initial setup
     with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
         t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
         
         with t1:
             st.subheader("Add New Account")
             nu, np = st.columns(2)
-            new_u = nu.text_input("Username", key="reg_u", placeholder="Enter username")
-            new_p = np.text_input("Password", type="password", key="reg_p", placeholder="Enter password")
+            new_u = nu.text_input("Username", key="reg_u")
+            new_p = np.text_input("Password", type="password", key="reg_p")
             new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="reg_r")
-            
-            if st.button("Create User Account", use_container_width=True, type="primary"):
+            if st.button("Create User Account", use_container_width=True):
                 if new_u and new_p:
                     try:
                         with engine.begin() as conn:
@@ -559,49 +524,33 @@ if st.session_state.user_role == "super_admin":
                                 text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
                                 {"u": new_u, "p": new_p, "r": new_r}
                             )
-                        st.success(f"User '{new_u}' successfully created.")
-                    except Exception:
-                        st.error("Username already exists or database error occurred.")
-                else:
-                    st.warning("Please provide both a username and password.")
+                        st.success(f"User {new_u} created!")
+                    except:
+                        st.error("Username already exists.")
 
         with t2:
             st.subheader("System Health")
-            if st.button("Test Database Connection", use_container_width=True):
+            if st.button("Test Connection", use_container_width=True):
                 try:
                     with engine.connect() as conn:
                         conn.execute(text("SELECT 1"))
-                    st.success("Database Connection: OK")
+                    st.success("✅ Database Connected")
                 except Exception as e:
-                    st.error(f"Connection Failed: {e}")
+                    st.error(f"Error: {e}")
 
         with t3:
-            st.subheader("Active User Directory")
+            st.subheader("User Directory")
             try:
-                # Fetching directly from the database to ensure it's always up to date
                 users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
-                
-                if not users_df.empty:
-                    # Formatting the table for better readability
-                    st.dataframe(
-                        users_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "username": "Username / Email",
-                            "role": st.column_config.TextColumn("Access Level", help="User permission tier")
-                        }
-                    )
-                    # Simple count metric
-                    st.caption(f"Total registered accounts: {len(users_df)}")
-                else:
-                    st.info("No users found in the directory.")
-                    
+                st.dataframe(users_df, use_container_width=True, hide_index=True)
             except Exception as e:
-                st.error(f"Could not load User Directory: {e}")
-                
+                st.error(f"Error: {e}")
+        
+        st.divider()
+        if st.button("EXIT ADMIN SESSION", use_container_width=True, type="secondary"):
+            logout()
+
 # --- 4. DATA INITIALIZATION GATE ---
-# Manager skips this if data was auto-loaded during login
 if st.session_state.data.empty:
     _, center_col, _ = st.columns([1, 2, 1])
     with center_col:
@@ -624,23 +573,33 @@ if st.session_state.data.empty:
                     save_to_db(processed)
                     st.session_state.data = processed
                     st.rerun()
+            
+            if st.button("CONNECT TO LIVE WEB SYNC", use_container_width=True, type="primary"):
+                # ... API logic ...
+                pass
         else:
-            # Manager/Viewer Manual Load fallback
-            if st.button("LOAD ANALYTICS VIEW", use_container_width=True, type="primary"):
+            # Viewers see a simpler load button
+            if st.button("LOAD ANALYTICS VIEW", use_container_width=True):
                 db_df = load_from_db()
                 if not db_df.empty:
                     st.session_state.data = process_data_safely(db_df)
                     st.rerun()
+
+    # If script reaches here and data is empty, stop so dashboard doesn't crash
     st.stop()
 
-# --- 5. DASHBOARD MAIN CONTENT ---
+# --- 5. DASHBOARD CODE STARTS BELOW ---
+
+# Using a small, styled header instead of st.title
 st.markdown(f"""
     <div style='padding: 10px; border-radius: 5px; background-color: #f0f2f6; margin-bottom: 20px;'>
         <p style='margin: 0; font-size: 0.9rem; color: #666; font-weight: bold;'>
-            CXP DASHBOARD: <span style='color: #FF6600;'>{st.session_state.username.upper()}</span>
+            CXP DASHBOARD: <span style='color: #FF6600;'>{st.session_state.username}</span>
         </p>
     </div>
 """, unsafe_allow_html=True)
+
+# Your analytics charts and tables go here...
 
 # --- DATA PREP ---
 df_base = st.session_state.data.copy()
@@ -675,26 +634,17 @@ with st.sidebar:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
             selected_dates = st.date_input("Select Range", value=(min_date, max_date))
 
-    # 2. Operational Unit (FORCE "Software" and "Enterprise" visibility)
+    # 2. Operational Unit (Hard-cleaning "Unassigned" out of the UI)
     if 'Mapped_Team' in df_base.columns:
-        # Get unique teams from data
+        # Get unique teams and remove any variants of Unassigned/NaN
         raw_teams = df_base['Mapped_Team'].unique().tolist()
-        
-        # Clean out nulls and variants of "unassigned"
         available_teams = [
             t for t in raw_teams 
             if str(t).strip().lower() not in ['unassigned', 'nan', 'none', '']
         ]
-        
-        # Ensure your target departments are in the list even if current data is empty
-        target_depts = ["Software Dept", "Enterprise Team"]
-        for dept in target_depts:
-            if dept not in available_teams:
-                available_teams.append(dept)
-                
         unit_options = ["All Departments"] + sorted(available_teams)
     else:
-        unit_options = ["All Departments", "Software Dept", "Enterprise Team", "SITS IT Support"]
+        unit_options = ["All Departments", "Software Dept", "Enterprise Team", "Service Desk"]
     
     selected_unit = st.selectbox("Operational Unit", unit_options)
     
@@ -709,14 +659,15 @@ with st.sidebar:
     # 4. Agent Exclusions
     all_agents = sorted(df_base[a_col].dropna().unique().tolist()) if a_col in df_base.columns else []
     excluded_agents = st.multiselect("Exclude Agents", all_agents)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("LOGOUT SESSION", use_container_width=True):
+        st.session_state.data = pd.DataFrame()
+        st.rerun()
 
 # --- FILTERING LOGIC ---
 if not st.session_state.data.empty:
     df = df_base.copy()
-
-    # Safety: Force any remaining 'Unassigned' to 'Enterprise Team' 
-    if 'Mapped_Team' in df.columns:
-        df['Mapped_Team'] = df['Mapped_Team'].replace(['Unassigned', 'nan', 'None', ''], 'Enterprise Team')
 
     # 1. DATE RANGE FILTER
     if selected_dates and len(selected_dates) == 2:
@@ -728,10 +679,13 @@ if not st.session_state.data.empty:
     if selected_org != "All Customers":
         df = df[df['Parent_Company'] == selected_org]
 
-    # 3. UNIT FILTER 
+    # 3. UNIT FILTER (With Unassigned Catch-all)
     if selected_unit != "All Departments": 
-        team_col = 'Mapped_Team'
+        team_col = 'Mapped_Team' if 'Mapped_Team' in df.columns else t_col
         if team_col in df.columns:
+            # If a user selects a department, we filter strictly.
+            # If the raw data has 'Unassigned' but belongs to 'Software Dept', 
+            # ensure your process_data_safely has already mapped it.
             df = df[df[team_col] == selected_unit]
 
     # 4. EXCLUSIONS
@@ -747,7 +701,7 @@ if not st.session_state.data.empty:
     df_aged = pd.DataFrame()
 
     if 'Status' in df.columns:
-        # Standardize status check
+        # Normalize status to catch "Pending " or "pending"
         status_clean = df['Status'].astype(str).str.strip().str.lower()
         df_pending = df[status_clean == 'pending'].copy()
         
@@ -761,7 +715,7 @@ if not st.session_state.data.empty:
 else:
     df = df_pending = df_aged = pd.DataFrame()
     backlog_val = aged_count = 0
-    
+
 # --- SLA CALCULATIONS ---
 total_v = len(df)
 tto_met_count = df['TTO_Done'].sum() if 'TTO_Done' in df.columns else 0
@@ -774,12 +728,6 @@ ttr_perf_pct = (ttr_met_count / total_v * 100) if total_v > 0 else 0
 tto_breach_pct = 100 - tto_perf_pct if total_v > 0 else 0
 ttr_breach_pct = 100 - ttr_perf_pct if total_v > 0 else 0
 
-# STATIC BACKLOG: Always uses st.session_state.data to ignore sidebar filters
-if 'Status' in st.session_state.data.columns:
-    static_backlog_val = len(st.session_state.data[st.session_state.data['Status'].str.contains('Pending|Open', case=False, na=False)])
-else:
-    static_backlog_val = 0
-
 # --- MAIN INTERFACE ---
 if aged_count > 0:
     st.markdown(f'<div class="critical-alert-box">⚠️ CRITICAL ALERT: {aged_count} Pending tickets have been open for more than 30 days!</div>', unsafe_allow_html=True)
@@ -788,9 +736,6 @@ st.markdown(f'<div class="header-box"><h2>CXP ANALYTICS: {selected_unit.upper()}
 
 tab1, tab2, tab3, tab4 = st.tabs(["Main Dashboard", "Personnel Performance", "Group Hierarchy", "Executive Report"])
 
-# ---------------------------------------------------------
-# TAB 1: MAIN DASHBOARD
-# ---------------------------------------------------------
 with tab1:
     st.markdown('<span class="section-header">Performance & Breach Overview</span>', unsafe_allow_html=True)
     
@@ -811,10 +756,7 @@ with tab1:
     st.write("### Overall Metrics")
     c9, c10, c11, _ = st.columns([1,1,1,1])
     with c9: kpi_card("Total Volume", total_v, color="#1F3B4D")
-    
-    # Static Backlog injection
-    with c10: kpi_card("Total Backlog", static_backlog_val, color="#D32F2F" if static_backlog_val > 0 else "#1F3B4D", flash=(static_backlog_val > 0))
-    
+    with c10: kpi_card("Total Backlog", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
     with c11: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
 
     if 'Status' in df.columns:
@@ -827,8 +769,10 @@ with tab1:
                     kpi_card(name, count, color=s_color)
 
     st.markdown('<span class="section-header">Detailed Ticket Breakdown</span>', unsafe_allow_html=True)
+    
     display_cols = ['Ref', 'Title', 'Start date', a_col, org_col]
-    if pr_col: display_cols.append(pr_col)
+    if pr_col:
+        display_cols.append(pr_col)
     
     available_cols = [c for c in display_cols if c in df_base.columns]
     
@@ -874,48 +818,63 @@ with tab1:
         with cr:
             st.dataframe(monthly[['Month', 'Ref', 'TTO %', 'TTR %']], use_container_width=True, hide_index=True, height=280)
 
-# ---------------------------------------------------------
-# TAB 2: PERSONNEL PERFORMANCE
-# ---------------------------------------------------------
 with tab2:
-    df.columns = [str(c).strip() for c in df.columns]
-    if a_col in df.columns and t_col in df.columns:
-        perf_data = df.groupby([a_col, t_col]).agg({'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'}).reset_index()
-        perf_data['TTO_Br'] = perf_data['Ref'] - perf_data['TTO_Done']
-        perf_data['TTR_Br'] = perf_data['Ref'] - perf_data['TTR_Done']
-        perf_data['TTO_Pct'] = (perf_data['TTO_Done'] / perf_data['Ref'] * 100).round(1).fillna(0)
-        perf_data['TTR_Pct'] = (perf_data['TTR_Done'] / perf_data['Ref'] * 100).round(1).fillna(0)
-        perf_data['TTO_Br_Pct'] = (100 - perf_data['TTO_Pct']).round(1)
-        perf_data['TTR_Br_Pct'] = (100 - perf_data['TTR_Pct']).round(1)
+    
+    if not df.empty and 'Agent' in df.columns:
+        # A. Aggregate Data by Agent
+        agent_stats = df.groupby('Agent').agg(
+            Total_Tickets=('Agent', 'count'),
+            TTO_Met=('TTO_Done', 'sum'),
+            TTR_Met=('TTR_Done', 'sum')
+        ).reset_index()
 
-        perf_data.columns = ['Agent', 'Department', 'Total', 'TTO Met', 'TTR Met', 'TTO Breach', 'TTR Breach', 'TTO %', 'TTR %', 'TTO Br %', 'TTR Br %']
+        # B. Calculate Percentages
+        agent_stats['TTO %'] = (agent_stats['TTO_Met'] / agent_stats['Total_Tickets'] * 100).round(1)
+        agent_stats['TTR %'] = (agent_stats['TTR_Met'] / agent_stats['Total_Tickets'] * 100).round(1)
+        
+        # Sort by total volume for the first view
+        agent_stats = agent_stats.sort_values(by='Total_Tickets', ascending=False)
 
-        depts = ["SITS IT Support", "Gamma IT", "Service Desk"]
-        for dept in depts:
-            dept_df = perf_data[perf_data['Department'] == dept].sort_values('Total', ascending=False)
-            if not dept_df.empty:
-                st.markdown(f'<div class="section-header">{dept.upper()} PERSONNEL PERFORMANCE</div>', unsafe_allow_html=True)
-                cols_to_show = ['Agent', 'Total', 'TTO Met', 'TTO Breach', 'TTO %', 'TTO Br %', 'TTR Met', 'TTR Breach', 'TTR %', 'TTR Br %']
-                st.dataframe(dept_df[cols_to_show], use_container_width=True, hide_index=True, column_config={
-                    "TTO %": st.column_config.NumberColumn(format="%.1f%%"),
-                    "TTO Br %": st.column_config.NumberColumn(format="%.1f%%"),
-                    "TTR %": st.column_config.NumberColumn(format="%.1f%%"),
-                    "TTR Br %": st.column_config.NumberColumn(format="%.1f%%")
-                })
+        # C. Visualization - Bar Chart
+        fig_agent = px.bar(
+            agent_stats, 
+            x='Agent', 
+            y=['TTO %', 'TTR %'],
+            barmode='group',
+            title="SLA Achievement by Technician",
+            color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'},
+            labels={'value': 'Percentage (%)', 'variable': 'Metric'}
+        )
+        # Add a target line for your 83.7% goal
+        fig_agent.add_hline(y=83.7, line_dash="dot", line_color="red", annotation_text="Target 83.7%")
+        
+        st.plotly_chart(fig_agent, use_container_width=True)
+
+        # D. Summary Table
+        st.markdown("### Individual Performance Breakdown")
+        st.dataframe(
+            agent_stats[['Agent', 'Total_Tickets', 'TTO %', 'TTR %']],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "TTO %": st.column_config.ProgressColumn("TTO Performance", min_value=0, max_value=100, format="%.1f%%"),
+                "TTR %": st.column_config.ProgressColumn("TTR Performance", min_value=0, max_value=100, format="%.1f%%")
+            }
+        )
     else:
-        st.error(f"Mapping Error: Column '{a_col}' or '{t_col}' not found.")
-
-# ---------------------------------------------------------
-# TAB 3: GROUP HIERARCHY
-# ---------------------------------------------------------
+        st.warning("No Personnel data found. Please ensure 'Agent' exists in your data source.")
 with tab3:
     st.markdown('<span class="section-header">Conglomerate & Parent Group Explorer</span>', unsafe_allow_html=True)
+    
     parent_summary = df_base.groupby('Parent_Company').agg({'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'}).reset_index().sort_values('Ref', ascending=False)
     parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).round(1)
     parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
+    
+    st.write("#### Top Customers by Parent Group")
     st.dataframe(parent_summary, use_container_width=True, hide_index=True)
     st.markdown("---")
     
+    st.write("#### Parent Group Ticket Distribution")
     parent_list = sorted(df_base['Parent_Company'].unique().tolist())
     target_parent = st.selectbox("Select Parent Conglomerate", parent_list)
     
@@ -935,24 +894,136 @@ with tab3:
             fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_sub, use_container_width=True)
 
-# ---------------------------------------------------------
-# TAB 4: EXECUTIVE REPORT
-# ---------------------------------------------------------
+import streamlit as st
+from fpdf import FPDF
+from datetime import datetime
+
+# --- 1. PDF CLASS DEFINITION ---
+class SITS_Report(FPDF):
+    def header(self):
+        # Corporate Branding Header
+        self.set_fill_color(255, 102, 0)  # SITS Orange
+        self.rect(0, 0, 210, 45, 'F')
+        
+        self.set_y(10)
+        self.set_font('Arial', 'B', 24)
+        self.set_text_color(255, 255, 255)
+        self.cell(0, 15, 'EXECUTIVE PERFORMANCE REPORT', 0, 1, 'C')
+        
+        self.set_font('Arial', 'I', 10)
+        self.cell(0, 5, f'SITS Operational Analytics - Generated {datetime.now().strftime("%Y-%m-%d")}', 0, 1, 'C')
+        self.ln(20)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, f'Confidential Strategic Document - Page {self.page_no()}', 0, 0, 'C')
+
+def generate_board_pdf(total_v, backlog, tto, ttr, aged, breaches, unit, dates, reasons):
+    from fpdf import FPDF
+    
+    # Internal helper to prevent 'latin-1' encoding crashes
+    def clean_text(s):
+        if not s:
+            return ""
+        # Replace common Excel/Word special characters with standard versions
+        replacements = {
+            '\u2013': '-', # En-dash
+            '\u2014': '-', # Em-dash
+            '\u2018': "'", # Left single quote
+            '\u2019': "'", # Right single quote
+            '\u201c': '"', # Left double quote
+            '\u201d': '"', # Right double quote
+            '\u2022': '*', # Bullet point
+        }
+        for unicode_char, safe_char in replacements.items():
+            s = str(s).replace(unicode_char, safe_char)
+        # Final safety: encode to latin-1 and ignore anything else remaining
+        return s.encode('latin-1', 'ignore').decode('latin-1')
+
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Section I: Executive Overview
+    pdf.set_font('Arial', 'B', 16)
+    pdf.set_text_color(31, 59, 77)
+    pdf.cell(0, 10, clean_text(f'Executive Summary: {unit}'), 0, 1, 'L')
+    
+    pdf.set_font('Arial', '', 11)
+    pdf.set_text_color(50, 50, 50)
+    intro_text = clean_text(
+        f"This operational audit covers the period: {dates}. "
+        f"Total processing volume: {total_v:,} tickets. "
+        "Intended for board-level review of resource efficiency and SLA adherence."
+    )
+    pdf.multi_cell(0, 7, intro_text)
+    pdf.ln(8)
+
+    # Section II: Strategic KPI Grid
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(255, 102, 0)
+    pdf.cell(0, 10, 'I. Key Performance Indicators', 0, 1, 'L')
+    
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(47, 12, 'Metric Type', 1, 0, 'C', True)
+    pdf.cell(47, 12, 'Actual Value', 1, 0, 'C', True)
+    pdf.cell(47, 12, 'Benchmark', 1, 0, 'C', True)
+    pdf.cell(47, 12, 'Status', 1, 1, 'C', True)
+
+    pdf.set_font('Arial', '', 11)
+    metrics = [
+        ["Response (TTO)", f"{tto:.1f}%", "90.0%", "HEALTHY" if tto >= 90 else "ACTION REQ."],
+        ["Resolution (TTR)", f"{ttr:.1f}%", "90.0%", "HEALTHY" if ttr >= 90 else "BELOW TARGET"],
+        ["Pending Volume", str(backlog), "< 100", "STABLE" if backlog < 100 else "HIGH"],
+    ]
+    
+    for row in metrics:
+        pdf.cell(47, 10, clean_text(row[0]), 1)
+        pdf.cell(47, 10, clean_text(row[1]), 1, 0, 'C')
+        pdf.cell(47, 10, clean_text(row[2]), 1, 0, 'C')
+        pdf.cell(47, 10, clean_text(row[3]), 1, 1, 'C')
+    pdf.ln(10)
+
+    # Section III: Risk Analysis
+    pdf.set_font('Arial', 'B', 14)
+    pdf.set_text_color(211, 47, 47)
+    pdf.cell(0, 10, 'II. Critical Risk Assessment', 0, 1, 'L')
+    
+    pdf.set_fill_color(255, 245, 245)
+    pdf.set_font('Arial', '', 11)
+    pdf.set_text_color(0, 0, 0)
+    
+    clean_reasons = clean_text(reasons).replace("'", "").replace("[", "").replace("]", "")
+    risk_summary = clean_text(
+        f"Analysis identifies {aged} aged tickets exceeding the 30-day threshold. "
+        f"Total SLA breaches recorded: {breaches:,}. "
+        f"Priority intervention required for: {clean_reasons}"
+    )
+    pdf.multi_cell(0, 7, risk_summary, 0, 'L', True)
+    
+    # Return as safe latin-1 bytes for Streamlit
+    return pdf.output(dest='S').encode('latin-1', 'ignore')
+
 with tab4:
     st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
     st.caption(f"Operational Scope: {selected_unit}")
 
+    # Derived solely from the date-filtered 'df' and 'df_pending'
     current_total = len(df)
-    current_backlog = static_backlog_val 
+    current_backlog = len(df_pending)
     
     top_reasons_text = "No pending tickets in this period."
     if not df_pending.empty and pr_col:
         top_reasons = df_pending[pr_col].value_counts().head(3).index.tolist()
         top_reasons_text = ", ".join(top_reasons)
 
+    # Metric Row
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Selected Volume", f"{current_total:,}")
-    m2.metric("System Backlog", current_backlog)
+    m2.metric("Active Backlog", current_backlog)
     m3.metric("TTO %", f"{tto_perf_pct:.1f}%")
     m4.metric("TTR %", f"{ttr_perf_pct:.1f}%")
 
@@ -963,4 +1034,23 @@ with tab4:
         st.error(f"**Critical Risks**\n- Aged Tickets: {aged_count}\n- SLA Breaches: {ttr_breach_count:,}")
     with c2:
         st.warning(f"**Top Delay Drivers**\n{top_reasons_text}")
+
+    # PDF Download
+    st.subheader("Board Meeting Assets")
     
+    # Format the date label for the report
+    date_label = f"{selected_dates[0]} to {selected_dates[1]}" if selected_dates else "All Time"
+    
+    pdf_output = generate_board_pdf(
+        current_total, current_backlog, tto_perf_pct, ttr_perf_pct, 
+        aged_count, ttr_breach_count, selected_unit, 
+        date_label, top_reasons_text
+    )
+
+    st.download_button(
+        label="📄 DOWNLOAD BOARD-READY PDF BROCHURE",
+        data=pdf_output,
+        file_name=f"Executive_Report_{selected_unit}_{datetime.now().strftime('%Y%m%d')}.pdf",
+        mime="application/pdf",
+        use_container_width=True
+    )
