@@ -1054,3 +1054,84 @@ with tab4:
         mime="application/pdf",
         use_container_width=True
     )
+import streamlit as st
+import master_data_sync  # Ensure this script is in your folder
+from datetime import datetime
+import pandas as pd
+
+# --- 1. THE HARD REFRESH FUNCTION ---
+def refresh_data():
+    """Wipes the existing DB, runs the sync script, and reloads state"""
+    with st.spinner("Deleting old data and syncing fresh Excel..."):
+        try:
+            # 1. Manually clear Streamlit's cache to prevent seeing old data
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            
+            # 2. Trigger the external sync script (This wipes the SQLite table)
+            master_data_sync.process_data()
+            
+            # 3. Pull fresh data from the newly created database
+            db_df = load_from_db() # Your function to read sqlite
+            if not db_df.empty:
+                # Update session state immediately
+                st.session_state.data = process_data_safely(db_df)
+                st.session_state.last_update = datetime.now().strftime("%H:%M:%S")
+                st.toast(f"Success! {len(db_df)} records loaded.")
+            else:
+                st.error("The database is empty after sync. Check your Excel file.")
+                
+        except Exception as e:
+            st.error(f"Sync failed: {e}")
+    
+    # Force the app to restart from the top with new data
+    st.rerun()
+
+# --- 2. SIDEBAR MANUAL TRIGGER ---
+with st.sidebar:
+    st.markdown("### Data Management")
+    if st.button("REFRESH & WIPE DB", use_container_width=True, type="primary"):
+        refresh_data()
+    
+    if 'last_update' in st.session_state:
+        st.caption(f"Last Hard Sync: {st.session_state.last_update}")
+    
+    # Debugging count to show you the real-time record total
+    if not st.session_state.data.empty:
+        st.write(f"**Current Records:** {len(st.session_state.data)}")
+
+# --- 3. AUTO-UPDATE FRAGMENT (30 SECONDS) ---
+@st.fragment(run_every=30)
+def sync_dashboard_ui():
+    """Silently pulls from DB every 30s to update the dashboard charts"""
+    # Force a fresh read from the database file on disk
+    db_df = load_from_db()
+    
+    if not db_df.empty:
+        # Update the session state silently
+        st.session_state.data = process_data_safely(db_df)
+        
+        # Display the timestamp inside the fragment so you know it's live
+        st.caption(f"Live Sync Active (30s) | Last Check: {datetime.now().strftime('%H:%M:%S')}")
+        
+        # IMPORTANT: You must call your dashboard UI inside here
+        render_dashboard_content(st.session_state.data)
+    else:
+        st.warning("Database currently empty. Please click 'Refresh & Wipe'.")
+
+# --- 4. DASHBOARD CONTENT WRAPPER ---
+def render_dashboard_content(df):
+    """
+    Wrap all your metrics, tabs, and charts in this function.
+    This is what the fragment will refresh every 30 seconds.
+    """
+    # 1. KPIs
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Tickets", len(df))
+
+# --- 5. MAIN APP EXECUTION ---
+if not st.session_state.data.empty:
+    # This calls the auto-sync loop
+    sync_dashboard_ui()
+else:
+    st.info("No data available. Click 'REFRESH & WIPE DB' to import data from Excel.")
