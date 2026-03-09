@@ -6,20 +6,72 @@ import os
 from io import BytesIO
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
+import base64
+from sqlalchemy import text
+from fpdf import FPDF
+import streamlit as st
+import master_data_sync  
+from datetime import datetime
+import pandas as pd
+import time
+import os
+import master_data_sync 
 
-# --- 1. PAGE CONFIGURATION ---
-# This MUST be the first Streamlit command
+# --- 1. CONFIGURATION & PATHS ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BASE_DIR, 'sits_analytics.db')
+
+# Replace this with the RAW URL of your database on GitHub
+DB_GITHUB_URL = "https://raw.githubusercontent.com/SITS-SWNAVIGO/cxp_dashboard/cxp_dashboard_malki/sits_analytics.db"
+
+def download_latest_db():
+    """Downloads the processed sits_analytics.db directly from GitHub."""
+    try:
+        response = requests.get(DB_GITHUB_URL, timeout=30)
+        if response.status_code == 200:
+            with open(DB_FILE, 'wb') as f:
+                f.write(response.content)
+            return True
+        else:
+            st.error(f"GitHub Download Error: Status {response.status_code}")
+            return False
+    except Exception as e:
+        st.error(f"Sync Connection Error: {e}")
+        return False
+
+def auto_sync_if_needed():
+    """Checks if the database is missing or older than 4 hours, then downloads it."""
+    four_hours = 14400 # seconds
+    
+    sync_required = False
+    if not os.path.exists(DB_FILE):
+        sync_required = True
+    else:
+        last_modified = os.path.getmtime(DB_FILE)
+        if (time.time() - last_modified) > four_hours:
+            sync_required = True
+
+    if sync_required:
+        with st.spinner("Fetching latest database from GitHub..."):
+            if download_latest_db():
+                # We update the modification time manually to avoid immediate re-syncs
+                os.utime(DB_FILE, None) 
+                st.toast("Database updated!")
+                time.sleep(1)
+                st.rerun()
+
+# --- 2. EXECUTION & PAGE CONFIG ---
+# This must run before creating the engine
+auto_sync_if_needed()
+
 st.set_page_config(
     page_title="SITS Analytics Portal", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
-# --- 2. DATABASE SETUP ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "sits_analytics.db")
-
-# check_same_thread=False is essential for Streamlit's multi-threaded nature
+# --- 3. DATABASE ENGINE SETUP ---
+# Standardizing the engine to point to the downloaded file
 engine = create_engine(
     f"sqlite:///{DB_FILE}", 
     connect_args={"check_same_thread": False},
@@ -422,14 +474,6 @@ def process_data_safely(df):
         
     return df
 
-import streamlit as st
-import pandas as pd
-import os
-import base64
-import requests
-from io import BytesIO
-from sqlalchemy import text
-
 # --- 1. INITIALIZATION ---
 def initialize_session():
     if "authenticated" not in st.session_state:
@@ -456,14 +500,6 @@ def logout():
     st.session_state.username = None
     st.session_state.data = pd.DataFrame()
     st.rerun()
-
-import streamlit as st
-import pandas as pd
-import os
-import base64
-from io import BytesIO
-import requests
-from sqlalchemy import text
 
 # --- 2. LOGIN UI ---
 if not st.session_state.authenticated:
@@ -625,14 +661,25 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### FILTERS")
     
-    # 1. Date Filter Logic
-    selected_dates = None
+
+    # 1. Date Filter Logic - Separate Selectors
     d_col = 'Date_Fixed' if 'Date_Fixed' in df_base.columns else 'Start date'
+    date_from, date_to = None, None
+
     if d_col in df_base.columns:
         valid_dates = pd.to_datetime(df_base[d_col]).dropna()
         if not valid_dates.empty:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
-            selected_dates = st.date_input("Select Range", value=(min_date, max_date))
+            
+            # Using columns to place them side-by-side in the sidebar
+            col_f, col_t = st.columns(2)
+            with col_f:
+                date_from = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date)
+            with col_t:
+                date_to = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date)
+            
+            # Re-mapping to a tuple so your existing filtering logic doesn't break
+            selected_dates = (date_from, date_to)
 
     # 2. Operational Unit (Hard-cleaning "Unassigned" out of the UI)
     if 'Mapped_Team' in df_base.columns:
@@ -894,10 +941,6 @@ with tab3:
             fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_sub, use_container_width=True)
 
-import streamlit as st
-from fpdf import FPDF
-from datetime import datetime
-
 # --- 1. PDF CLASS DEFINITION ---
 class SITS_Report(FPDF):
     def header(self):
@@ -1054,10 +1097,6 @@ with tab4:
         mime="application/pdf",
         use_container_width=True
     )
-import streamlit as st
-import master_data_sync  # Ensure this script is in your folder
-from datetime import datetime
-import pandas as pd
 
 # --- 1. THE HARD REFRESH FUNCTION ---
 def refresh_data():
