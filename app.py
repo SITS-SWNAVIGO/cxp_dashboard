@@ -22,7 +22,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, 'sits_analytics.db')
 
 # Replace this with the RAW URL of your database on GitHub
-DB_GITHUB_URL = "https://raw.githubusercontent.com/SITS-SWNAVIGO/cxp_dashboard/cxp_dashboard_malki/sits_analytics.db"
+DB_GITHUB_URL = "https://github.com/SITS-SWNAVIGO/cxp_dashboard/blob/cxp_dashboard_malki/sits_analytics.db"
 
 def download_latest_db():
     """Downloads the processed sits_analytics.db directly from GitHub."""
@@ -660,7 +660,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### FILTERS")
-    
 
     # 1. Date Filter Logic - Separate Selectors
     d_col = 'Date_Fixed' if 'Date_Fixed' in df_base.columns else 'Start date'
@@ -712,56 +711,93 @@ with st.sidebar:
         st.session_state.data = pd.DataFrame()
         st.rerun()
 
-# --- FILTERING LOGIC ---
+# --- 5. DASHBOARD FILTERING LOGIC ---
+
+# 1. INITIALIZE VARIABLES (Crucial to prevent NameErrors)
+df = pd.DataFrame()
+df_pending = pd.DataFrame()
+df_aged = pd.DataFrame()
+backlog_val = 0
+aged_count = 0
+
+# Ensure selected_dates exists even if the sidebar logic was skipped
+if 'selected_dates' not in locals():
+    selected_dates = None
+
 if not st.session_state.data.empty:
-    df = df_base.copy()
+    df = st.session_state.data.copy()
 
-    # 1. DATE RANGE FILTER
+    # 2. DATE RANGE FILTER
+    # Only filter if selected_dates was successfully created in the sidebar
     if selected_dates and len(selected_dates) == 2:
-        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-        df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
-                (df['Start date'].dt.date <= selected_dates[1])]
+        try:
+            # Ensure 'Start date' is datetime objects
+            df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
+            
+            # Filter using .date() to match the date_input format
+            df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
+                    (df['Start date'].dt.date <= selected_dates[1])]
+        except Exception as e:
+            st.error(f"Date Filter Error: {e}")
 
-    # 2. CUSTOMER FILTER
-    if selected_org != "All Customers":
+    # 3. CUSTOMER FILTER
+    if 'selected_org' in locals() and selected_org != "All Customers":
         df = df[df['Parent_Company'] == selected_org]
 
-    # 3. UNIT FILTER (With Unassigned Catch-all)
-    if selected_unit != "All Departments": 
-        team_col = 'Mapped_Team' if 'Mapped_Team' in df.columns else t_col
+    # 4. UNIT FILTER
+    if 'selected_unit' in locals() and selected_unit != "All Departments": 
+        team_col = 'Mapped_Team'
         if team_col in df.columns:
-            # If a user selects a department, we filter strictly.
-            # If the raw data has 'Unassigned' but belongs to 'Software Dept', 
-            # ensure your process_data_safely has already mapped it.
             df = df[df[team_col] == selected_unit]
 
-    # 4. EXCLUSIONS
-    if excluded_orgs:
+    # 5. EXCLUSIONS
+    if 'excluded_orgs' in locals() and excluded_orgs:
         df = df[~df['Parent_Company'].isin(excluded_orgs)]
 
-    if excluded_agents and a_col in df.columns:
+    if 'excluded_agents' in locals() and excluded_agents and a_col in df.columns:
         df = df[~df[a_col].isin(excluded_agents)]
 
-    # 5. STATUS & AGED LOGIC
-    one_month_ago = datetime.now() - timedelta(days=30)
-    df_pending = pd.DataFrame()
-    df_aged = pd.DataFrame()
+    # 6. STATUS & AGED LOGIC
+    # Using a fixed reference for "now" to keep calculations consistent
+    now = datetime.now()
+    one_month_ago = now - timedelta(days=30)
 
     if 'Status' in df.columns:
-        # Normalize status to catch "Pending " or "pending"
+        # Clean status for reliable filtering
         status_clean = df['Status'].astype(str).str.strip().str.lower()
         df_pending = df[status_clean == 'pending'].copy()
         
-        # Calculate Aged Tickets
-        df_pending['Start date'] = pd.to_datetime(df_pending['Start date'], errors='coerce')
-        df_aged = df_pending[df_pending['Start date'] < one_month_ago]
+        # --- 6. STATUS & AGED LOGIC ---
+now = datetime.now()
+one_month_ago = now - timedelta(days=30)
+
+# 1. Dynamically find the Start Date column to avoid KeyError
+# We look for common variations of the name
+date_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
+
+if 'Status' in df.columns and date_col:
+    # Normalize status for filtering
+    status_clean = df['Status'].astype(str).str.strip().str.lower()
+    df_pending = df[status_clean == 'pending'].copy()
+    
+    df_aged = pd.DataFrame()
+
+    if not df_pending.empty:
+        # Use the dynamically found date_col instead of hardcoded 'Start date'
+        df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce')
+        
+        # Ensure comparison is possible by removing timezones (tz-naive)
+        temp_dates = df_pending[date_col].dt.tz_localize(None)
+        df_aged = df_pending[temp_dates < one_month_ago]
 
     backlog_val = len(df_pending)
     aged_count = len(df_aged)
-
 else:
-    df = df_pending = df_aged = pd.DataFrame()
-    backlog_val = aged_count = 0
+    # Fallback if columns are missing
+    backlog_val = 0
+    aged_count = 0
+    if not date_col:
+        st.warning("Could not find a 'Start Date' column in the data.")
 
 # --- SLA CALCULATIONS ---
 total_v = len(df)
