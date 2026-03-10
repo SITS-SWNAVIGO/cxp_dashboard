@@ -166,12 +166,11 @@ def apply_styles():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
         
-        /* 1. ROOT VARIABLES */
+        /* 1. ROOT VARIABLES: Theme switching logic */
         :root {
             --bg-card: #ffffff;
             --text-main: #1F3B4D;
             --text-sub: #666666;
-            --border-color: #EEEEEE;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -183,53 +182,86 @@ def apply_styles():
             }
         }
 
-        /* 2. MAIN LAYOUT & COMPACTING SIDEBAR */
+        /* 2. MAIN LAYOUT: Adaptive background & core typography */
         html, body, [data-testid="stAppViewContainer"] {
+            background-color: var(--background-color) !important;
+            color: var(--text-color) !important;
             font-family: 'Inter', sans-serif;
             font-size: 0.9rem !important;
         }
 
-        /* Compact Sidebar: Remove unwanted vertical spaces */
-        [data-testid="stSidebarContent"] {
-            padding-top: 0rem !important; /* Reduces space at the very top */
-        }
-        
-        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-            gap: 0.4rem !important; /* Reduces gap between EVERY sidebar widget */
-        }
-
         .block-container { 
             padding-top: 3rem !important; 
+            padding-bottom: 1rem !important; 
             max-width: 98% !important; 
         }
 
-        /* 3. SIDEBAR BRANDING */
+      /* ULTRA-COMPACT SIDEBAR WITH VISIBILITY FIX */
         [data-testid="stSidebar"] {
-            background-color: #1F3B4D !important;
+            background-image: linear-gradient(180deg, #102A43 0%, #061727 100%) !important;
         }
 
-        [data-testid="stSidebar"] .stMarkdown, 
-        [data-testid="stSidebar"] label, 
-        [data-testid="stSidebar"] p,
-        [data-testid="stSidebar"] h3 {
-            color: #FFFFFF !important;
-            margin-bottom: 0px !important; /* Tighter labels */
+        /* Remove vertical bloat */
+        [data-testid="stSidebar"] .stVerticalBlock { gap: 0rem !important; }
+        [data-testid="stSidebar"] .block-container { padding: 0.5rem 0.8rem !important; }
+
+        /* Shrink Logo and Pull Content Up */
+        [data-testid="stSidebar"] [data-testid="stImage"] {
+            margin-bottom: -35px !important;
+            transform: scale(0.8);
         }
 
-        /* Sidebar Inputs: High Contrast & Compact Height */
+        /* LABELS: Clear Visibility & No Overlap */
+        [data-testid="stSidebar"] label {
+            color: #F0F4F8 !important;
+            margin-bottom: 2px !important; 
+            margin-top: 8px !important;
+            font-size: 0.75rem !important;
+            font-weight: 700 !important;
+            display: block !important;
+            text-transform: uppercase;
+        }
+
+        /* INPUTS: Force Visible Dark Text on White Background */
         [data-testid="stSidebar"] div[data-baseweb="select"] > div,
         [data-testid="stSidebar"] div[data-baseweb="base-input"] > input,
-        [data-testid="stSidebar"] div[data-baseweb="input"] > input,
-        [data-testid="stSidebar"] div[data-testid="stFileUploadDropzone"] {
+        [data-testid="stSidebar"] div[data-baseweb="input"] > input {
+            min-height: 30px !important;
+            height: 30px !important;
             background-color: #FFFFFF !important;
-            color: #000000 !important;
-            min-height: 30px !important; /* Smaller input boxes */
+            border-radius: 4px !important;
+            padding-left: 10px !important;
+            /* Force text color for visibility */
+            color: #102A43 !important; 
+            -webkit-text-fill-color: #102A43 !important;
         }
-        
-        /* 4. TABS & BUTTONS */
+
+        /* Fix for visibility of selected options in dropdowns */
+        [data-testid="stSidebar"] [data-baseweb="select"] * {
+            color: #102A43 !important;
+        }
+
+        /* FILE UPLOADER: Minimalist */
+        [data-testid="stFileUploadDropzone"] { padding: 5px !important; }
+        [data-testid="stFileUploadDropzone"] div div { display: none !important; }
+
+        /* BUTTONS: Bold & Gradient */
+        [data-testid="stSidebar"] div.stButton > button {
+            min-height: 35px !important;
+            margin-top: 10px !important;
+            background: linear-gradient(135deg, #FF6600 0%, #FF8533 100%) !important;
+            font-weight: 700 !important;
+            color: white !important;
+            text-transform: uppercase;
+        }
+
+        /* 5. TABS & BUTTONS */
         button[data-baseweb="tab"] {
+            background-color: transparent !important;
+            border: none !important;
+            color: var(--text-main) !important;
             font-weight: 600 !important;
-            padding: 5px 15px !important;
+            padding: 10px 20px !important;
         }
 
         button[data-baseweb="tab"][aria-selected="true"] {
@@ -240,40 +272,68 @@ def apply_styles():
         div.stButton > button:not([data-baseweb="tab"]) {
             background-color: #FF6600 !important;
             color: white !important;
-            border-radius: 4px !important;
+            border-radius: 6px !important;
             border: none !important;
+            transition: 0.3s;
             width: 100%;
-            height: 2.2rem !important; /* Compact button height */
+        }
+        
+        div.stButton > button:not([data-baseweb="tab"]):hover {
+            background-color: #e65c00 !important;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
 
-        /* 5. UI COMPONENTS: KPI Cards */
+        /* 6. UI COMPONENTS: KPI Cards & Headers */
+        .header-box {
+            background: #FF6600; padding: 8px 16px; border-radius: 8px;
+            margin-bottom: 12px; color: white !important;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .header-box h2 { color: white !important; margin: 0; font-size: 1.1rem; font-weight: 700; }
+
         .kpi-wrapper {
             background-color: var(--bg-card); 
-            padding: 8px 10px;
-            border-radius: 6px; 
-            margin-bottom: 6px;
+            padding: 10px 12px;
+            border-radius: 8px; 
+            margin-bottom: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             border: 1px solid var(--border-color); 
             text-align: center;
         }
-        .kpi-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
-        .kpi-value { font-size: 1.1rem; font-weight: 800; margin: 0; }
+        .kpi-label { font-size: 0.6rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
+        .kpi-value { font-size: 1rem; font-weight: 800; margin: 0; }
 
-        /* 6. CRITICAL ALERT ANIMATION */
+        /* 7. ALERT BOX & ANIMATIONS */
+        @keyframes critical-glow {
+            0% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
+            50% { background-color: rgba(211, 47, 47, 0.35); border-color: rgba(211, 47, 47, 1); }
+            100% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
+        }
+
         .critical-alert-box {
-            background-color: rgba(211, 47, 47, 0.1);
-            padding: 10px; 
-            border-radius: 6px; 
+            animation: critical-glow 1.5s infinite;
+            padding: 15px; 
+            border-radius: 8px; 
             border: 2px solid #D32F2F;
             color: #D32F2F; 
             font-weight: 800; 
             text-align: center; 
-            margin-bottom: 15px; 
-            font-size: 0.95rem;
+            margin-bottom: 20px; 
+            font-size: 1.1rem;
+        }
+
+        @keyframes pulse-red-border {
+            0% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(211, 47, 47, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); }
+        }
+
+        .flashing-kpi {
+            animation: pulse-red-border 2s infinite;
+            border: 2px solid #D32F2F !important;
         }
 
         footer { visibility: hidden; }
-        hr { margin: 0.5rem 0 !important; } /* Compact horizontal rules */
     </style>
     """, unsafe_allow_html=True)
 
