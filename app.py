@@ -16,6 +16,7 @@ import pandas as pd
 import time
 import os
 import master_data_sync 
+import msal
 
 # --- 1. CONFIGURATION & PATHS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -165,11 +166,12 @@ def apply_styles():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
         
-        /* 1. ROOT VARIABLES: Theme switching logic */
+        /* 1. ROOT VARIABLES */
         :root {
             --bg-card: #ffffff;
             --text-main: #1F3B4D;
             --text-sub: #666666;
+            --border-color: #EEEEEE;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -181,64 +183,53 @@ def apply_styles():
             }
         }
 
-        /* 2. MAIN LAYOUT: Adaptive background & core typography */
+        /* 2. MAIN LAYOUT & COMPACTING SIDEBAR */
         html, body, [data-testid="stAppViewContainer"] {
-            background-color: var(--background-color) !important;
-            color: var(--text-color) !important;
             font-family: 'Inter', sans-serif;
             font-size: 0.9rem !important;
         }
 
+        /* Compact Sidebar: Remove unwanted vertical spaces */
+        [data-testid="stSidebarContent"] {
+            padding-top: 0rem !important; /* Reduces space at the very top */
+        }
+        
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+            gap: 0.4rem !important; /* Reduces gap between EVERY sidebar widget */
+        }
+
         .block-container { 
             padding-top: 3rem !important; 
-            padding-bottom: 1rem !important; 
             max-width: 98% !important; 
         }
 
-        /* 3. SIDEBAR: Brand Identity (Dark Blue) */
+        /* 3. SIDEBAR BRANDING */
         [data-testid="stSidebar"] {
             background-color: #1F3B4D !important;
         }
 
-        /* Sidebar Text: Forced white for visibility */
         [data-testid="stSidebar"] .stMarkdown, 
         [data-testid="stSidebar"] label, 
         [data-testid="stSidebar"] p,
         [data-testid="stSidebar"] h3 {
             color: #FFFFFF !important;
+            margin-bottom: 0px !important; /* Tighter labels */
         }
 
-        /* Sidebar Inputs: HIGH CONTRAST FIX */
-        /* Forces white background and dark text for all dropdowns, inputs, and date pickers in the sidebar */
+        /* Sidebar Inputs: High Contrast & Compact Height */
         [data-testid="stSidebar"] div[data-baseweb="select"] > div,
         [data-testid="stSidebar"] div[data-baseweb="base-input"] > input,
         [data-testid="stSidebar"] div[data-baseweb="input"] > input,
-        [data-testid="stSidebar"] .stMultiSelect div[role="listbox"],
         [data-testid="stSidebar"] div[data-testid="stFileUploadDropzone"] {
             background-color: #FFFFFF !important;
             color: #000000 !important;
+            min-height: 30px !important; /* Smaller input boxes */
         }
         
-        /* Ensure input text specifically is visible and black */
-        [data-testid="stSidebar"] input {
-            color: #000000 !important;
-            -webkit-text-fill-color: #000000 !important;
-        }
-
-        /* 4. NAVIGATION ICONS: Hamburger & Expander visibility */
-        [data-testid="stHeader"] svg, 
-        button[title="Collapse sidebar"] svg, 
-        button[title="Expand sidebar"] svg {
-            fill: #FF6600 !important;
-        }
-
-        /* 5. TABS & BUTTONS */
+        /* 4. TABS & BUTTONS */
         button[data-baseweb="tab"] {
-            background-color: transparent !important;
-            border: none !important;
-            color: var(--text-main) !important;
             font-weight: 600 !important;
-            padding: 10px 20px !important;
+            padding: 5px 15px !important;
         }
 
         button[data-baseweb="tab"][aria-selected="true"] {
@@ -249,68 +240,40 @@ def apply_styles():
         div.stButton > button:not([data-baseweb="tab"]) {
             background-color: #FF6600 !important;
             color: white !important;
-            border-radius: 6px !important;
+            border-radius: 4px !important;
             border: none !important;
-            transition: 0.3s;
             width: 100%;
-        }
-        
-        div.stButton > button:not([data-baseweb="tab"]):hover {
-            background-color: #e65c00 !important;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            height: 2.2rem !important; /* Compact button height */
         }
 
-        /* 6. UI COMPONENTS: KPI Cards & Headers */
-        .header-box {
-            background: #FF6600; padding: 8px 16px; border-radius: 8px;
-            margin-bottom: 12px; color: white !important;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .header-box h2 { color: white !important; margin: 0; font-size: 1.1rem; font-weight: 700; }
-
+        /* 5. UI COMPONENTS: KPI Cards */
         .kpi-wrapper {
             background-color: var(--bg-card); 
-            padding: 10px 12px;
-            border-radius: 8px; 
-            margin-bottom: 8px;
+            padding: 8px 10px;
+            border-radius: 6px; 
+            margin-bottom: 6px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             border: 1px solid var(--border-color); 
             text-align: center;
         }
-        .kpi-label { font-size: 0.6rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
-        .kpi-value { font-size: 1rem; font-weight: 800; margin: 0; }
+        .kpi-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
+        .kpi-value { font-size: 1.1rem; font-weight: 800; margin: 0; }
 
-        /* 7. ALERT BOX & ANIMATIONS */
-        @keyframes critical-glow {
-            0% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
-            50% { background-color: rgba(211, 47, 47, 0.35); border-color: rgba(211, 47, 47, 1); }
-            100% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
-        }
-
+        /* 6. CRITICAL ALERT ANIMATION */
         .critical-alert-box {
-            animation: critical-glow 1.5s infinite;
-            padding: 15px; 
-            border-radius: 8px; 
+            background-color: rgba(211, 47, 47, 0.1);
+            padding: 10px; 
+            border-radius: 6px; 
             border: 2px solid #D32F2F;
             color: #D32F2F; 
             font-weight: 800; 
             text-align: center; 
-            margin-bottom: 20px; 
-            font-size: 1.1rem;
-        }
-
-        @keyframes pulse-red-border {
-            0% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(211, 47, 47, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); }
-        }
-
-        .flashing-kpi {
-            animation: pulse-red-border 2s infinite;
-            border: 2px solid #D32F2F !important;
+            margin-bottom: 15px; 
+            font-size: 0.95rem;
         }
 
         footer { visibility: hidden; }
+        hr { margin: 0.5rem 0 !important; } /* Compact horizontal rules */
     </style>
     """, unsafe_allow_html=True)
 
@@ -501,46 +464,111 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
-# --- 2. LOGIN UI ---
-if not st.session_state.authenticated:
-    st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
-    _, center_col, _ = st.columns([1, 1.5, 1])
-    
-    with center_col:
-        logo_html = ""
-        if 'LOGO_PATH' in globals() and os.path.exists(LOGO_PATH):
-            with open(LOGO_PATH, "rb") as f:
-                bin_str = base64.b64encode(f.read()).decode()
-            logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:120px; margin-bottom:20px;">'
+# --- 1. PRODUCTION AD CONFIGURATION ---
+CLIENT_ID = "108da7d7-a2de-466a-b55f-0e2536ffdfc7"
+CLIENT_SECRET = "bfs8Q~gNHEghcmmIkufgkeGZe.AK.018nddpaa5~" 
+AUTHORITY = "https://login.microsoftonline.com/common"
+# FIXED: Using the production URL provided by IT
+REDIRECT_URI = "https://cxp.navigo.lk/" 
+SCOPE = ["User.Read"]
 
-        st.markdown(f'''
-            <div style="text-align:center; margin-top:10vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
-                {logo_html}
-                <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
-                <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">Secure Access Portal</p>
-            </div>
-        ''', unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        input_user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
-        input_pass = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
-        
-        if st.button("LOGIN", use_container_width=True):
-            role = get_db_user(input_user, input_pass)
-            if role:
-                st.session_state.authenticated = True
-                st.session_state.user_role = role.lower()
-                st.session_state.username = input_user
-                
-                # Global Auto-Load: Load existing data if it exists in the database
+def get_msal_app():
+    return msal.ConfidentialClientApplication(
+        CLIENT_ID, 
+        authority=AUTHORITY, 
+        client_credential=CLIENT_SECRET
+    )
+
+# --- 2. SESSION INITIALIZATION ---
+def init_session_state():
+    defaults = {
+        "authenticated": False,
+        "username": None,
+        "user_role": None,
+        "data": pd.DataFrame()
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# --- 3. MICROSOFT AD AUTHENTICATION LOGIC ---
+if "code" in st.query_params and not st.session_state.authenticated:
+    try:
+        msal_app = get_msal_app()
+        # Exchange authorization code for access token
+        result = msal_app.acquire_token_by_authorization_code(
+            st.query_params["code"], 
+            scopes=SCOPE, 
+            redirect_uri=REDIRECT_URI
+        )
+
+        if "id_token_claims" in result:
+            # Set User Session
+            st.session_state.authenticated = True
+            st.session_state.username = result["id_token_claims"].get("name")
+            st.session_state.user_role = "super_admin"
+            
+            # Post-Login Data Sync
+            with st.spinner("Syncing analytics environment..."):
                 db_df = load_from_db()
                 if not db_df.empty:
                     st.session_state.data = process_data_safely(db_df)
-                st.rerun()
-            else:
-                st.error("Invalid Username or Password")
-    st.stop()
+            
+            # Clear URL params and refresh for a clean dashboard view
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.error("Authentication failed: Unable to verify identity with Microsoft.")
+    except Exception as e:
+        st.error(f"System Login Error: {str(e)}")
 
+# --- 4. SECURE LOGIN UI ---
+if not st.session_state.authenticated:
+    # Hide sidebar and tighten layout for the splash screen
+    st.markdown("""
+        <style>
+            [data-testid="stSidebar"] {display: none !important;}
+            .main .block-container {padding-top: 2rem;}
+        </style>
+    """, unsafe_allow_html=True)
+
+    _, center_col, _ = st.columns([1, 2, 1])
+    
+    with center_col:
+        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
+        
+        # Branding Card
+        st.markdown(f'''
+            <div style="text-align:center; background:white; padding:40px; border-radius:15px; 
+                        border-top:6px solid #FF6600; box-shadow: 0 15px 35px rgba(0,0,0,0.15); margin-bottom: 20px;">
+                <h1 style="color:#1F3B4D; margin-bottom:5px; font-weight:800; font-size: 2rem;">CXP ANALYTICS</h1>
+                <p style="color:#666; font-size:1rem; margin-bottom:25px;">INTERNAL ACCESS PORTAL</p>
+                <hr style="border:0.5px solid #eee; margin-bottom:25px;">
+        ''', unsafe_allow_html=True)
+        
+        # Action Button
+        msal_app = get_msal_app()
+        auth_url = msal_app.get_authorization_request_url(SCOPE, redirect_uri=REDIRECT_URI)
+        
+        st.markdown(f'''
+                <a href="{auth_url}" target="_self" style="text-decoration: none;">
+                    <button style="background-color: #FF6600; color: white; padding: 18px; border: none; 
+                                   border-radius: 8px; width: 100%; cursor: pointer; font-size: 1rem;
+                                   font-weight: bold; transition: 0.3s; box-shadow: 0 4px 15px rgba(255,102,0,0.3);">
+                        SIGN IN WITH SITS ACCOUNT
+                    </button>
+                </a>
+                <p style="text-align:center; color:#999; font-size:0.8rem; margin-top:25px;">
+                    Authorized Personnel Only • Powered by Azure AD
+                </p>
+            </div>
+        ''', unsafe_allow_html=True)
+
+    # Prevent further script execution until authenticated
+    st.stop()
+    
     # --- 3. SUPER ADMIN CONTROL PANEL ---
 if st.session_state.user_role == "super_admin":
     with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
@@ -1164,7 +1192,6 @@ def refresh_data():
 
 # --- 2. SIDEBAR MANUAL TRIGGER ---
 with st.sidebar:
-    st.markdown("### Data Management")
     if st.button("REFRESH & WIPE DB", use_container_width=True, type="primary"):
         refresh_data()
     
