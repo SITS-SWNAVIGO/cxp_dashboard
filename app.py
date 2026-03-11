@@ -16,7 +16,6 @@ import pandas as pd
 import time
 import os
 import master_data_sync 
-import msal
 
 # --- 1. CONFIGURATION & PATHS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -524,155 +523,86 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
-# --- 1. PRODUCTION AD CONFIGURATION ---
+import msal
+import streamlit as st
+import requests
+
+# --- AZURE AD CONFIGURATION ---
 CLIENT_ID = "108da7d7-a2de-466a-b55f-0e2536ffdfc7"
-CLIENT_SECRET = "bfs8Q~gNHEghcmmIkufgkeGZe.AK.018nddpaa5~" 
-AUTHORITY = "https://login.microsoftonline.com/common"
-# FIXED: Using the production URL provided by IT
-REDIRECT_URI = "https://cxp.navigo.lk/" 
+CLIENT_SECRET = "bfs8Q~gNHEghcmmIkufgkeGZe.AK.018nddpaa5~"
+TENANT_ID = "common" # Or your specific Tenant ID if preferred
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+REDIRECT_URI = "https://cxp.navigo.lk/"
 SCOPE = ["User.Read"]
 
 def get_msal_app():
     return msal.ConfidentialClientApplication(
-        CLIENT_ID, 
-        authority=AUTHORITY, 
-        client_credential=CLIENT_SECRET
+        CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
     )
 
-# --- 2. SESSION INITIALIZATION ---
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "username": None,
-        "user_role": None,
-        "data": pd.DataFrame()
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# --- 3. MICROSOFT AD AUTHENTICATION LOGIC ---
-if "code" in st.query_params and not st.session_state.authenticated:
-    try:
-        msal_app = get_msal_app()
-        # Exchange authorization code for access token
-        result = msal_app.acquire_token_by_authorization_code(
-            st.query_params["code"], 
-            scopes=SCOPE, 
-            redirect_uri=REDIRECT_URI
-        )
-
-        if "id_token_claims" in result:
-            # Set User Session
-            st.session_state.authenticated = True
-            st.session_state.username = result["id_token_claims"].get("name")
-            st.session_state.user_role = "super_admin"
-            
-            # Post-Login Data Sync
-            with st.spinner("Syncing analytics environment..."):
-                db_df = load_from_db()
-                if not db_df.empty:
-                    st.session_state.data = process_data_safely(db_df)
-            
-            # Clear URL params and refresh for a clean dashboard view
-            st.query_params.clear()
-            st.rerun()
-        else:
-            st.error("Authentication failed: Unable to verify identity with Microsoft.")
-    except Exception as e:
-        st.error(f"System Login Error: {str(e)}")
-
-# --- 4. SECURE LOGIN UI ---
-if not st.session_state.authenticated:
-    # Hide sidebar and tighten layout for the splash screen
-    st.markdown("""
-        <style>
-            [data-testid="stSidebar"] {display: none !important;}
-            .main .block-container {padding-top: 2rem;}
-        </style>
-    """, unsafe_allow_html=True)
-
-    _, center_col, _ = st.columns([1, 2, 1])
+# --- 2. LOGIN UI & LOGIC ---
+if not st.session_state.get("authenticated"):
+    st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
+    _, center_col, _ = st.columns([1, 1.5, 1])
     
     with center_col:
-        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
-        
-        # Branding Card
         st.markdown(f'''
-            <div style="text-align:center; background:white; padding:40px; border-radius:15px; 
-                        border-top:6px solid #FF6600; box-shadow: 0 15px 35px rgba(0,0,0,0.15); margin-bottom: 20px;">
-                <h1 style="color:#1F3B4D; margin-bottom:5px; font-weight:800; font-size: 2rem;">CXP ANALYTICS</h1>
-                <p style="color:#666; font-size:1rem; margin-bottom:25px;">INTERNAL ACCESS PORTAL</p>
-                <hr style="border:0.5px solid #eee; margin-bottom:25px;">
+            <div style="text-align:center; margin-top:10vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+                <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
+                <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">Secure Access Portal</p>
+                <p style="font-size:0.8rem; color:#444; margin-top:10px;">Sign in with your corporate account to continue.</p>
+            </div>
         ''', unsafe_allow_html=True)
         
-        # Action Button
+        st.markdown("<br>", unsafe_allow_html=True)
+        
         msal_app = get_msal_app()
         auth_url = msal_app.get_authorization_request_url(SCOPE, redirect_uri=REDIRECT_URI)
         
-        st.markdown(f'''
-                <a href="{auth_url}" target="_self" style="text-decoration: none;">
-                    <button style="background-color: #FF6600; color: white; padding: 18px; border: none; 
-                                   border-radius: 8px; width: 100%; cursor: pointer; font-size: 1rem;
-                                   font-weight: bold; transition: 0.3s; box-shadow: 0 4px 15px rgba(255,102,0,0.3);">
-                        SIGN IN WITH SITS ACCOUNT
-                    </button>
-                </a>
-                <p style="text-align:center; color:#999; font-size:0.8rem; margin-top:25px;">
-                    Authorized Personnel Only • Powered by Azure AD
-                </p>
-            </div>
-        ''', unsafe_allow_html=True)
+        st.link_button("LOGIN WITH MICROSOFT", auth_url, use_container_width=True, type="primary")
 
-    # Prevent further script execution until authenticated
+        # Handle the Auth Response
+        query_params = st.query_params
+        if "code" in query_params:
+            code = query_params["code"]
+            result = msal_app.acquire_token_by_authorization_code(code, scopes=SCOPE, redirect_uri=REDIRECT_URI)
+            
+            if "access_token" in result:
+                st.session_state.authenticated = True
+                st.session_state.username = result.get("id_token_claims").get("name")
+                st.session_state.user_email = result.get("id_token_claims").get("preferred_username")
+                
+                # Role Assignment Logic
+                email = st.session_state.user_email.lower()
+                if email == "malki.p@sits.lk":
+                    st.session_state.user_role = "super_admin"
+                elif "@sits.lk" in email:
+                    st.session_state.user_role = "admin"
+                else:
+                    st.session_state.user_role = "viewer"
+
+                # Load data from the local database file
+                db_df = load_data() 
+                if db_df is not None:
+                    st.session_state.data = db_df
+                
+                st.query_params.clear()
+                st.rerun()
+            else:
+                st.error("Authentication failed. Please check your credentials or contact IT.")
+
     st.stop()
+
+# --- 3. LOGOUT & USER INFO ---
+with st.sidebar:
+    st.markdown("### User Session")
+    st.write(f"**User:** {st.session_state.username}")
+    st.write(f"**Role:** {st.session_state.user_role.upper()}")
     
-    # --- 3. SUPER ADMIN CONTROL PANEL ---
-if st.session_state.user_role == "super_admin":
-    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
-        t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
-        
-        with t1:
-            st.subheader("Add New Account")
-            nu, np = st.columns(2)
-            new_u = nu.text_input("Username", key="reg_u")
-            new_p = np.text_input("Password", type="password", key="reg_p")
-            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="reg_r")
-            if st.button("Create User Account", use_container_width=True):
-                if new_u and new_p:
-                    try:
-                        with engine.begin() as conn:
-                            conn.execute(
-                                text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
-                                {"u": new_u, "p": new_p, "r": new_r}
-                            )
-                        st.success(f"User {new_u} created!")
-                    except:
-                        st.error("Username already exists.")
-
-        with t2:
-            st.subheader("System Health")
-            if st.button("Test Connection", use_container_width=True):
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(text("SELECT 1"))
-                    st.success("✅ Database Connected")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        with t3:
-            st.subheader("User Directory")
-            try:
-                users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
-                st.dataframe(users_df, use_container_width=True, hide_index=True)
-            except Exception as e:
-                st.error(f"Error: {e}")
-        
-        st.divider()
-        if st.button("EXIT ADMIN SESSION", use_container_width=True, type="secondary"):
-            logout()
+    if st.button("LOGOUT", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
 
 # --- 4. DATA INITIALIZATION GATE ---
 if st.session_state.data.empty:
@@ -1035,35 +965,65 @@ with tab2:
     else:
         st.warning("No Personnel data found. Please ensure 'Agent' exists in your data source.")
 with tab3:
-    st.markdown('<span class="section-header">Conglomerate & Parent Group Explorer</span>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header" style="color:#FF6600; font-size:1.5rem; font-weight:bold; margin-bottom:20px;">Conglomerate & Parent Group Explorer</div>', unsafe_allow_html=True)
     
-    parent_summary = df_base.groupby('Parent_Company').agg({'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'}).reset_index().sort_values('Ref', ascending=False)
-    parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).round(1)
-    parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
-    
-    st.write("#### Top Customers by Parent Group")
-    st.dataframe(parent_summary, use_container_width=True, hide_index=True)
-    st.markdown("---")
-    
-    st.write("#### Parent Group Ticket Distribution")
-    parent_list = sorted(df_base['Parent_Company'].unique().tolist())
-    target_parent = st.selectbox("Select Parent Conglomerate", parent_list)
-    
-    if target_parent and org_col in df_base.columns:
-        hierarchy_df = df_base[df_base['Parent_Company'] == target_parent]
-        subsidiaries = hierarchy_df.groupby(org_col).agg({'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'}).reset_index().sort_values('Ref', ascending=False)
-        subsidiaries['TTO %'] = (subsidiaries['TTO_Done'] / subsidiaries['Ref'] * 100).round(1)
-        subsidiaries['TTR %'] = (subsidiaries['TTR_Done'] / subsidiaries['Ref'] * 100).round(1)
-        subsidiaries.columns = ['Subsidiary/Brand', 'Ticket Count', 'TTO Met', 'TTR Met', 'TTO Compliance %', 'TTR Compliance %']
+    if 'Parent_Company' in df_base.columns:
+        # --- 1. Top Customers Table ---
+        parent_summary = df_base.groupby('Parent_Company').agg({
+            'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
+        }).reset_index().sort_values('Ref', ascending=False)
+
+        parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).fillna(0).round(1)
+        parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
         
-        c_left, c_right = st.columns([1, 1.2])
-        with c_left:
-            st.metric(f"Total Tickets: {target_parent}", len(hierarchy_df))
-            st.dataframe(subsidiaries, use_container_width=True, hide_index=True)
-        with c_right:
-            fig_sub = px.bar(subsidiaries.head(10), x='Ticket Count', y='Subsidiary/Brand', orientation='h', title=f"Top 10 Customers in {target_parent}", color_discrete_sequence=['#FF6600'])
-            fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_sub, use_container_width=True)
+        st.write("#### Top Customers by Parent Group")
+        st.dataframe(parent_summary, use_container_width=True, hide_index=True)
+        st.markdown("---")
+    
+        # --- 2. Parent Group Distribution ---
+        st.write("#### Parent Group Ticket Distribution")
+        parent_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
+        target_parent = st.selectbox("Select Parent Conglomerate", options=parent_list)
+        
+        if target_parent:
+            hierarchy_df = df_base[df_base['Parent_Company'] == target_parent]
+            
+            # EXTENDED COLUMN PICKER: Added 'Organization->Name' and 'Organization Name'
+            # These are the most common exports from SITS/Zendesk systems.
+            expected_columns = [
+                'Organization->Name', 'Organization Name', 'Organization', 
+                'Customer', 'Subsidiary', 'Subsidiary/Brand', 'Account'
+            ]
+            
+            actual_org_col = next((c for c in expected_columns if c in hierarchy_df.columns), None)
+            
+            if actual_org_col:
+                subsidiaries = hierarchy_df.groupby(actual_org_col).agg({
+                    'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
+                }).reset_index().sort_values('Ref', ascending=False)
+                
+                # Compliance Calcs
+                subsidiaries['TTO %'] = (subsidiaries['TTO_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
+                subsidiaries['TTR %'] = (subsidiaries['TTR_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
+                subsidiaries.columns = ['Subsidiary/Brand', 'Ticket Count', 'TTO Met', 'TTR Met', 'TTO Compliance %', 'TTR Compliance %']
+                
+                c_left, c_right = st.columns([1, 1.2])
+                with c_left:
+                    st.metric(f"Total Tickets: {target_parent}", len(hierarchy_df))
+                    st.dataframe(subsidiaries, use_container_width=True, hide_index=True)
+                with c_right:
+                    fig_sub = px.bar(
+                        subsidiaries.head(10).sort_values('Ticket Count', ascending=True), 
+                        x='Ticket Count', y='Subsidiary/Brand', orientation='h', 
+                        title=f"Top 10 Customers in {target_parent}",
+                        color_discrete_sequence=['#FF6600'], template="plotly_dark"
+                    )
+                    fig_sub.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_sub, use_container_width=True)
+            else:
+                # DEBUG MODE: If it still fails, show the user the available columns
+                st.error(f"⚠️ Column Mismatch! Could not find a Subsidiary column.")
+                st.write("Available columns in your file are:", list(hierarchy_df.columns))
 
 # --- 1. PDF CLASS DEFINITION ---
 class SITS_Report(FPDF):
