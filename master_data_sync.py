@@ -1,135 +1,112 @@
 import pandas as pd
-import sqlite3
+import mysql.connector
 import os
-import sys
+from datetime import datetime
 
-# --- 1. CONFIGURATION & PATHS ---
-# This ensures the script always finds files in its own folder
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-EXCEL_FILE = os.path.join(BASE_DIR, 'data.xlsx') 
-DB_FILE = os.path.join(BASE_DIR, 'sits_analytics.db')
+# --- 1. CONFIGURATION ---
+# These variables should be set in your Easypanel Environment tab
+DB_HOST = os.getenv("DB_HOST", "213.210.36.220")
+DB_USER = os.getenv("DB_USER", "root")
+DB_PASS = os.getenv("DB_PASSWORD")
+DB_NAME = "sits_analytics"
 
-def get_operational_unit(agent_name, org_name):
-    """
-    Categorizes tickets into the 5 specific operational units.
-    """
-    agent = str(agent_name).strip()
-    org = str(org_name).strip()
+EXCEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.xlsx')
 
-    # Agent-Specific Lists
-    service_desk = [
-        "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", 
-        "Pathum Malshan", "Sasanka Madusith", "Ositha Buddika"
-    ]
-    gamma_it = [
-        "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", 
-        "Jeevan Indrajith", "Preshan Silva", "Kavindu Basilu", 
-        "Nimna Mendis", "Janindu Hewaalankarage", "Hasitha Munasinghe", 
-        "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan", "Hashan Madushanka"
-    ]
-    sits_support = [
-        "L.V Sudesh Dilhan", "Nuwan Weerasekara", 
-        "Mahela Ekanayaka", "Anushka Nayanatharu"
-    ]
-
-    # Mapping Logic Hierarchy
-    if agent in service_desk:
-        return "Service Desk"
-    if agent in gamma_it or "Gamma" in org:
-        return "Gamma IT"
-    if agent in sits_support or "SITS IT" in org:
-        return "SITS IT Support"
-    if "Software" in org or "Dev" in org:
-        return "Software Dept"
-    if "Enterprise" in org:
-        return "Enterprise Team"
-    
-    return "Other / Unassigned"
+def get_db_connection():
+    return mysql.connector.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASS,
+        database=DB_NAME
+    )
 
 def find_column(df, keywords):
-    """Helper to find column names regardless of exact spelling/casing."""
     for col in df.columns:
         if any(key.lower() in str(col).lower() for key in keywords):
             return col
     return None
 
 def map_sla_performance(val):
-    """
-    Logic: If the column contains 'no', 'breach', 'out', or 'failed', 
-    it means the SLA was actually MET (based on your specific data structure).
-    """
-    if pd.isna(val):
-        return 'breached'
-    
+    if pd.isna(val): return 'breached'
     clean_val = str(val).lower().strip()
-    # Based on your requirement: 'performance should be breach and breach should be perf'
+    # 'no' or 'failed' indicates a successful 'Met' status per user logic
     success_keywords = ['no', 'breach', 'out', 'failed']
-    
     return 'met' if any(k in clean_val for k in success_keywords) else 'breached'
 
 def process_data():
-    """Main function to transform Excel data into a SQLite Database."""
-    print("--- STARTING LOCAL DATA SYNC ---")
+    print("--- STARTING DATABASE SYNC (MYSQL) ---")
     
     if not os.path.exists(EXCEL_FILE):
-        print(f"Error: {EXCEL_FILE} not found. Please refresh and save your Excel file first.")
+        print(f"Error: {EXCEL_FILE} not found.")
         return
 
     try:
-        # 1. Load Excel and find the 'Ref' header row
-        print("Reading Excel file...")
+        # 1. Load Excel
         df_raw = pd.read_excel(EXCEL_FILE, header=None)
         header_mask = df_raw.eq('Ref').any(axis=1)
-        
-        if not header_mask.any():
-            raise ValueError("Could not find the 'Ref' column. Check your Excel formatting.")
-        
         header_idx = df_raw.index[header_mask].tolist()[0]
-        df = pd.read_excel(EXCEL_FILE, skiprows=header_idx)
-        df.columns = [str(col).strip() for col in df.columns]
+        df_new = pd.read_excel(EXCEL_FILE, skiprows=header_idx)
+        df_new.columns = [str(col).strip() for col in df_new.columns]
 
-        # 2. Process SLA Columns (TTO & TTR)
-        mapping_config = {
-            'TTO': (['SLA tto p', 'SLA tto passed'], 'SLA tto passed', 'TTO_Done'),
-            'TTR': (['SLA ttr pa', 'SLA ttr passed'], 'SLA ttr passed', 'TTR_Done')
-        }
+        # 2. Identify Columns
+        ref_col = find_column(df_new, ['ref']) or 'Ref'
+        status_col = find_column(df_new, ['status', 'state']) or 'Status'
+        agent_col = find_column(df_new, ['agent']) or 'Agent'
+        sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        for key, (keys, target_col, numeric_col) in mapping_config.items():
-            found = find_column(df, keys)
-            if found:
-                df[target_col] = df[found].apply(map_sla_performance)
-                # Numeric column for charts (1 = Met, 0 = Breached)
-                df[numeric_col] = df[target_col].apply(lambda x: 1 if x == 'met' else 0)
-
-        # 3. Map Agent Metadata & Operational Units
-        agent_col = find_column(df, ['Agent Name', 'Agent'])
-        org_col = find_column(df, ['Organization', 'Team'])
+        conn = get_db_connection()
         
-        # Ensure we have strings for mapping
-        df['Agent'] = df[agent_col].fillna('Unknown').astype(str) if agent_col else 'Unknown'
-        temp_org = df[org_col].fillna('N/A').astype(str) if org_col else 'N/A'
+        # 3. Create History Table with UNIQUE constraint to prevent duplicates
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS history_table (
+                Ref VARCHAR(50), 
+                Current_Status VARCHAR(50), 
+                Agent VARCHAR(100), 
+                Status_Log_Date DATETIME,
+                UNIQUE KEY unique_status (Ref, Current_Status)
+            )
+        """)
 
-        # Apply the get_operational_unit logic
-        df['Mapped_Team'] = df.apply(
-            lambda row: get_operational_unit(row['Agent'], temp_org.loc[row.name]), 
-            axis=1
-        )
+        # 4. Prepare Data
+        df_current = df_new.copy()
+        df_current['Current_Status'] = df_current[status_col].fillna('Unknown').astype(str)
+        df_current['Agent'] = df_current[agent_col].fillna('Unknown').astype(str)
+        df_current['Ref'] = df_current[ref_col].astype(str)
 
-        # 4. Standardize Start Dates
-        date_col = find_column(df, ['Start date'])
-        if date_col:
-            df['Start date'] = pd.to_datetime(df[date_col], errors='coerce')
+        # 5. Detect Changes by checking what ALREADY exists in history_table
+        # This prevents the "3 New entries" issue
+        existing_history = pd.read_sql("SELECT Ref, Current_Status FROM history_table", conn)
+        
+        # Merge to find rows that don't exist in the DB yet
+        comparison = df_current.merge(existing_history, on=['Ref', 'Current_Status'], how='left', indicator=True)
+        new_changes = comparison[comparison['_merge'] == 'left_only'].copy()
 
-        # 5. Save to SQLite Database
-        print(f"Saving processed data to {DB_FILE}...")
-        with sqlite3.connect(DB_FILE) as conn:
-            df.to_sql('analytics_data', conn, if_exists='replace', index=False)
+        if not new_changes.empty:
+            new_changes['Status_Log_Date'] = sync_time
+            history_entries = new_changes[['Ref', 'Current_Status', 'Agent', 'Status_Log_Date']]
+            
+            # Use SQLAlchemy or manual insert for MySQL
+            from sqlalchemy import create_engine
+            engine = create_engine(f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}")
+            history_entries.to_sql('history_table', engine, if_exists='append', index=False)
+            print(f">>> SUCCESS: Logged {len(history_entries)} new status updates.")
+        else:
+            print(">>> INFO: No new status changes to log.")
 
-        print("--- SUCCESS: LOCAL DATABASE UPDATED ---")
-        print(f"Next Step: Commit and Push '{os.path.basename(DB_FILE)}' to GitHub.")
+        # 6. Update main Analytics table
+        for key, keywords in [('SLA tto passed', ['sla tto p']), ('SLA ttr passed', ['sla ttr pa'])]:
+            found = find_column(df_current, keywords)
+            if found:
+                df_current[key] = df_current[found].apply(map_sla_performance)
+
+        df_current.to_sql('analytics_data', engine, if_exists='replace', index=False)
+        conn.commit()
+        conn.close()
+        print("--- DATABASE SYNC FINISHED ---")
 
     except Exception as e:
-        print(f"Critical Error during processing: {e}")
+        print(f"Sync Error: {e}")
 
 if __name__ == "__main__":
     process_data()
