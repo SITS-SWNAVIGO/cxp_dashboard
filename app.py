@@ -18,6 +18,7 @@ import os
 import master_data_sync 
 import sqlite3
 from streamlit_autorefresh import st_autorefresh
+import mysql.connector
 
 
 # interval is in milliseconds (300,000 ms = 5 minutes)
