@@ -3,6 +3,7 @@ import os
 import time
 from datetime import datetime
 from sqlalchemy import create_engine, text, DateTime, String
+import mysql.connector
 
 # --- 1. CONFIGURATION ---
 DB_HOST = "213.210.36.220"
