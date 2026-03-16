@@ -127,4 +127,8 @@ if __name__ == "__main__":
     while True:
         process_and_upload()
         print("Sleeping for 300 seconds...")
+<<<<<<< HEAD
         time.sleep(300)
+=======
+        time.sleep(300)
+>>>>>>> b8bee4f1501c3864f753b2063fb95c8c835cb8ff
