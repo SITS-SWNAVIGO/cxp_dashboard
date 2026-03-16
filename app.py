@@ -16,142 +16,103 @@ import pandas as pd
 import time
 import os
 import master_data_sync 
-import msal
+import sqlite3
+from streamlit_autorefresh import st_autorefresh
 
-# --- 1. CONFIGURATION & PATHS ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, 'sits_analytics.db')
 
-# Replace this with the RAW URL of your database on GitHub
-DB_GITHUB_URL = "https://github.com/SITS-SWNAVIGO/cxp_dashboard/blob/cxp_dashboard_malki/sits_analytics.db"
+# interval is in milliseconds (300,000 ms = 5 minutes)
+count = st_autorefresh(interval=300000, key="fivedatarefresh")
 
-def download_latest_db():
-    """Downloads the processed sits_analytics.db directly from GitHub."""
-    try:
-        response = requests.get(DB_GITHUB_URL, timeout=30)
-        if response.status_code == 200:
-            with open(DB_FILE, 'wb') as f:
-                f.write(response.content)
-            return True
-        else:
-            st.error(f"GitHub Download Error: Status {response.status_code}")
-            return False
-    except Exception as e:
-        st.error(f"Sync Connection Error: {e}")
-        return False
+# --- 1. CONFIGURATION (Direct MySQL Connection) ---
+# We use the same credentials as your master_data_sync.py
+DB_HOST = "213.210.36.220"
+DB_USER = "sits"
+DB_PASS = "123456"
+DB_NAME = "sits_analytics"
+DB_PORT = "3309"
 
-def auto_sync_if_needed():
-    """Checks if the database is missing or older than 4 hours, then downloads it."""
-    four_hours = 14400 # seconds
-    
-    sync_required = False
-    if not os.path.exists(DB_FILE):
-        sync_required = True
-    else:
-        last_modified = os.path.getmtime(DB_FILE)
-        if (time.time() - last_modified) > four_hours:
-            sync_required = True
+# The connection string for MySQL
+# Use "mysql+mysqlconnector" to ensure compatibility
+CONNECTION_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-    if sync_required:
-        with st.spinner("Fetching latest database from GitHub..."):
-            if download_latest_db():
-                # We update the modification time manually to avoid immediate re-syncs
-                os.utime(DB_FILE, None) 
-                st.toast("Database updated!")
-                time.sleep(1)
-                st.rerun()
-
-# --- 2. EXECUTION & PAGE CONFIG ---
-# This must run before creating the engine
-auto_sync_if_needed()
-
+# --- 2. PAGE CONFIG ---
 st.set_page_config(
-    page_title="SITS Analytics Portal", 
+    page_title="CXP Performance Pro", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
 # --- 3. DATABASE ENGINE SETUP ---
-# Standardizing the engine to point to the downloaded file
+# pool_pre_ping=True helps keep the connection alive on the Easypanel server
 engine = create_engine(
-    f"sqlite:///{DB_FILE}", 
-    connect_args={"check_same_thread": False},
+    CONNECTION_URL,
+    pool_size=5,
+    max_overflow=10,
     pool_pre_ping=True
 )
 
 # --- 3. SYSTEM INITIALIZATION ---
 def initialize_system():
-    """Initializes tables and creates the primary Super Admin account if missing."""
-    with engine.begin() as conn:
-        # Create User Authentication Table
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL
-            )
-        """))
-        
-        # Check if the Super User exists; if not, create it
-        admin_check = conn.execute(
-            text("SELECT 1 FROM users WHERE username = 'admin'")
-        ).fetchone()
-        
-        if not admin_check:
+    """Ensures the users table exists in the MySQL database."""
+    try:
+        with engine.begin() as conn:
+            # Create User Table if missing (MySQL uses VARCHAR for lengths)
             conn.execute(text("""
-                INSERT INTO users (username, password, role) 
-                VALUES ('admin', 'Admin@CXP', 'super_admin')
+                CREATE TABLE IF NOT EXISTS users (
+                    username VARCHAR(255) PRIMARY KEY,
+                    password VARCHAR(255) NOT NULL,
+                    role VARCHAR(50) NOT NULL
+                )
             """))
+            
+            # Check if Super User exists
+            admin_check = conn.execute(
+                text("SELECT 1 FROM users WHERE username = 'admin'")
+            ).fetchone()
+            
+            if not admin_check:
+                conn.execute(text("""
+                    INSERT INTO users (username, password, role) 
+                    VALUES ('admin', 'Admin@CXP', 'super_admin')
+                """))
+    except Exception as e:
+        st.error(f"Database Initialization Error: {e}")
 
-# Run initialization immediately
+# Run initialization immediately when app starts
 initialize_system()
 
 # --- 4. DATA & AUTH FUNCTIONS ---
 
 def get_db_user(username, password):
-    """Authenticates credentials against the SQLite database."""
+    """Authenticates users against the live MySQL database."""
     try:
         with engine.connect() as conn:
             query = text("SELECT role FROM users WHERE username = :u AND password = :p")
             result = conn.execute(query, {"u": username, "p": password}).fetchone()
             return result[0] if result else None
     except Exception as e:
-        st.error(f"Authentication System Error: {e}")
+        st.error(f"Authentication Error: {e}")
         return None
 
-def save_to_db(df):
-    """Saves the processed analytics dataframe to the database."""
-    if df is not None and not df.empty:
-        try:
-            # We use 'replace' to ensure the dashboard always shows the freshest sync
-            df.to_sql("analytics_data", engine, if_exists="replace", index=False)
-            return True
-        except Exception as e:
-            st.error(f"Database Save Error: {e}")
-    return False
-
 def load_from_db():
-    """Retrieves the stored analytics data."""
+    """Retrieves the live analytics data pushed by your local sync script."""
     try:
         with engine.connect() as conn:
-            return pd.read_sql(text("SELECT * FROM analytics_data"), conn)
-    except:
+            query = text("SELECT * FROM analytics_data")
+            return pd.read_sql(query, conn)
+    except Exception as e:
+        st.warning("No data found in database. Please run the local sync script.")
         return pd.DataFrame()
 
 def get_db_last_updated():
-    """Returns the last modified time and record count for the status bar."""
-    if not os.path.exists(DB_FILE):
-        return "No local database found"
-    
-    timestamp = os.path.getmtime(DB_FILE)
-    time_str = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
-    
+    """Displays the current status of the Easypanel database connection."""
     try:
         with engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM analytics_data")).scalar()
-            return f"Last Sync: {time_str} ({count} Records)"
-    except:
-        return f"Modified: {time_str} (Storage empty)"
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            return f"🟢 Live Connection | Records: {count:,} | Last Check: {now_str}"
+    except Exception:
+        return "🔴 Database Connection Offline"
 
 # --- LOGO PATH ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -524,155 +485,103 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
-# --- 1. PRODUCTION AD CONFIGURATION ---
-CLIENT_ID = "108da7d7-a2de-466a-b55f-0e2536ffdfc7"
-CLIENT_SECRET = "bfs8Q~gNHEghcmmIkufgkeGZe.AK.018nddpaa5~" 
-AUTHORITY = "https://login.microsoftonline.com/common"
-# FIXED: Using the production URL provided by IT
-REDIRECT_URI = "https://cxp.navigo.lk/" 
-SCOPE = ["User.Read"]
+import msal
+import base64
+import os
 
-def get_msal_app():
-    return msal.ConfidentialClientApplication(
-        CLIENT_ID, 
-        authority=AUTHORITY, 
-        client_credential=CLIENT_SECRET
-    )
+# --- 1. AD CONFIGURATION ---
+conf = st.secrets["azure_ad"]
+msal_app = msal.ConfidentialClientApplication(
+    conf["client_id"],
+    authority=conf["authority"],
+    client_credential=conf["client_secret"]
+)
 
-# --- 2. SESSION INITIALIZATION ---
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "username": None,
-        "user_role": None,
-        "data": pd.DataFrame()
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# --- 3. MICROSOFT AD AUTHENTICATION LOGIC ---
-if "code" in st.query_params and not st.session_state.authenticated:
+def check_user_authorization(email):
+    """Verifies if the email exists in the 'users' table and returns their role."""
     try:
-        msal_app = get_msal_app()
-        # Exchange authorization code for access token
-        result = msal_app.acquire_token_by_authorization_code(
-            st.query_params["code"], 
-            scopes=SCOPE, 
-            redirect_uri=REDIRECT_URI
-        )
-
-        if "id_token_claims" in result:
-            # Set User Session
-            st.session_state.authenticated = True
-            st.session_state.username = result["id_token_claims"].get("name")
-            st.session_state.user_role = "super_admin"
-            
-            # Post-Login Data Sync
-            with st.spinner("Syncing analytics environment..."):
-                db_df = load_from_db()
-                if not db_df.empty:
-                    st.session_state.data = process_data_safely(db_df)
-            
-            # Clear URL params and refresh for a clean dashboard view
-            st.query_params.clear()
-            st.rerun()
-        else:
-            st.error("Authentication failed: Unable to verify identity with Microsoft.")
+        with engine.connect() as conn:
+            # Case-insensitive match for the email
+            query = text("SELECT role FROM users WHERE LOWER(username) = LOWER(:email)")
+            result = conn.execute(query, {"email": email}).fetchone()
+            return result[0] if result else None
     except Exception as e:
-        st.error(f"System Login Error: {str(e)}")
+        st.error(f"Database Auth Error: {e}")
+        return None
 
-# --- 4. SECURE LOGIN UI ---
-if not st.session_state.authenticated:
-    # Hide sidebar and tighten layout for the splash screen
-    st.markdown("""
-        <style>
-            [data-testid="stSidebar"] {display: none !important;}
-            .main .block-container {padding-top: 2rem;}
-        </style>
-    """, unsafe_allow_html=True)
-
-    _, center_col, _ = st.columns([1, 2, 1])
+# --- 2. LOGIN UI & AUTH LOGIC ---
+if not st.session_state.get("authenticated"):
+    st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
     
+    # Catching the redirect code from the URL
+    params = st.query_params
+    
+    if "code" in params:
+        # Step: Exchange the temporary code for a User Token
+        result = msal_app.acquire_token_by_authorization_code(
+            params["code"],
+            scopes=["User.Read"],
+            redirect_uri=conf["redirect_uri"]
+        )
+        
+        if "id_token_claims" in result:
+            claims = result["id_token_claims"]
+            email = claims.get("preferred_username")
+            
+            # CRITICAL: Wrapper to catch DB/Module errors to prevent looping
+            try:
+                role = check_user_authorization(email)
+                
+                if role:
+                    st.session_state.authenticated = True
+                    st.session_state.username = email
+                    st.session_state.user_name = claims.get("name")
+                    st.session_state.user_role = role
+                    
+                    # Load Dashboard Data
+                    db_df = load_from_db()
+                    if not db_df.empty:
+                        st.session_state.data = process_data_safely(db_df)
+                    
+                    st.query_params.clear()
+                    st.rerun()
+                else:
+                    # DISPLAY ACCESS DENIED AND STOP
+                    st.error(f"🚫 Access Denied: {email} is not authorized in the SITS Analytics Database.")
+                    st.info("Please contact the system administrator to add your email to the whitelist.")
+                    st.stop() # Prevents the loop
+            
+            except Exception as e:
+                st.error(f"⚠️ System Error during Authorization: {e}")
+                st.warning("This usually happens if database modules (mysql) are missing or the connection is blocked.")
+                st.stop() # Prevents the loop
+        else:
+            st.error("Authentication failed. Microsoft did not return valid user info.")
+            if "error_description" in result:
+                st.warning(result["error_description"])
+            st.stop()
+
+    # Login Visuals (Only shown if no code is present or session is new)
+    _, center_col, _ = st.columns([1, 1.5, 1])
     with center_col:
-        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
-        
-        # Branding Card
+        logo_html = ""
+        if 'LOGO_PATH' in globals() and os.path.exists(LOGO_PATH):
+            with open(LOGO_PATH, "rb") as f:
+                bin_str = base64.b64encode(f.read()).decode()
+            logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:120px; margin-bottom:20px;">'
+
         st.markdown(f'''
-            <div style="text-align:center; background:white; padding:40px; border-radius:15px; 
-                        border-top:6px solid #FF6600; box-shadow: 0 15px 35px rgba(0,0,0,0.15); margin-bottom: 20px;">
-                <h1 style="color:#1F3B4D; margin-bottom:5px; font-weight:800; font-size: 2rem;">CXP ANALYTICS</h1>
-                <p style="color:#666; font-size:1rem; margin-bottom:25px;">INTERNAL ACCESS PORTAL</p>
-                <hr style="border:0.5px solid #eee; margin-bottom:25px;">
-        ''', unsafe_allow_html=True)
-        
-        # Action Button
-        msal_app = get_msal_app()
-        auth_url = msal_app.get_authorization_request_url(SCOPE, redirect_uri=REDIRECT_URI)
-        
-        st.markdown(f'''
-                <a href="{auth_url}" target="_self" style="text-decoration: none;">
-                    <button style="background-color: #FF6600; color: white; padding: 18px; border: none; 
-                                   border-radius: 8px; width: 100%; cursor: pointer; font-size: 1rem;
-                                   font-weight: bold; transition: 0.3s; box-shadow: 0 4px 15px rgba(255,102,0,0.3);">
-                        SIGN IN WITH SITS ACCOUNT
-                    </button>
-                </a>
-                <p style="text-align:center; color:#999; font-size:0.8rem; margin-top:25px;">
-                    Authorized Personnel Only • Powered by Azure AD
-                </p>
+            <div style="text-align:center; margin-top:10vh; background:white; padding:40px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+                {logo_html}
+                <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
+                <p style="font-size:0.8rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom:30px;">Authorized Access Only</p>
             </div>
         ''', unsafe_allow_html=True)
-
-    # Prevent further script execution until authenticated
+        
+        auth_url = msal_app.get_authorization_request_url(scopes=["User.Read"], redirect_uri=conf["redirect_uri"])
+        st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration: none;"><div style="background-color: #2F2F2F; color: white; padding: 12px; text-align: center; border-radius: 5px; font-weight: bold; margin-top: -20px;">SIGN IN WITH MICROSOFT 365</div></a>', unsafe_allow_html=True)
+        
     st.stop()
-    
-    # --- 3. SUPER ADMIN CONTROL PANEL ---
-if st.session_state.user_role == "super_admin":
-    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
-        t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
-        
-        with t1:
-            st.subheader("Add New Account")
-            nu, np = st.columns(2)
-            new_u = nu.text_input("Username", key="reg_u")
-            new_p = np.text_input("Password", type="password", key="reg_p")
-            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="reg_r")
-            if st.button("Create User Account", use_container_width=True):
-                if new_u and new_p:
-                    try:
-                        with engine.begin() as conn:
-                            conn.execute(
-                                text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
-                                {"u": new_u, "p": new_p, "r": new_r}
-                            )
-                        st.success(f"User {new_u} created!")
-                    except:
-                        st.error("Username already exists.")
-
-        with t2:
-            st.subheader("System Health")
-            if st.button("Test Connection", use_container_width=True):
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(text("SELECT 1"))
-                    st.success("✅ Database Connected")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        with t3:
-            st.subheader("User Directory")
-            try:
-                users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
-                st.dataframe(users_df, use_container_width=True, hide_index=True)
-            except Exception as e:
-                st.error(f"Error: {e}")
-        
-        st.divider()
-        if st.button("EXIT ADMIN SESSION", use_container_width=True, type="secondary"):
-            logout()
 
 # --- 4. DATA INITIALIZATION GATE ---
 if st.session_state.data.empty:
@@ -749,24 +658,24 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### FILTERS")
 
-    # 1. Date Filter Logic - Separate Selectors
-    d_col = 'Date_Fixed' if 'Date_Fixed' in df_base.columns else 'Start date'
-    date_from, date_to = None, None
+    # 1. Date Filter Logic - Restoring the From/To Selectors
+    # Dynamically find date column to prevent KeyErrors
+    d_col = next((c for c in df_base.columns if 'start' in c.lower() or 'fixed' in c.lower()), None)
+    selected_dates = []
 
-    if d_col in df_base.columns:
-        valid_dates = pd.to_datetime(df_base[d_col]).dropna()
+    if d_col:
+        valid_dates = pd.to_datetime(df_base[d_col], errors='coerce').dropna()
         if not valid_dates.empty:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
             
-            # Using columns to place them side-by-side in the sidebar
+            # SIDE-BY-SIDE DATE PICKERS
             col_f, col_t = st.columns(2)
             with col_f:
-                date_from = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date)
+                date_from = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date, key="sidebar_from")
             with col_t:
-                date_to = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date)
+                date_to = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date, key="sidebar_to")
             
-            # Re-mapping to a tuple so your existing filtering logic doesn't break
-            selected_dates = (date_from, date_to)
+            selected_dates = [date_from, date_to]
 
     # 2. Operational Unit (Hard-cleaning "Unassigned" out of the UI)
     if 'Mapped_Team' in df_base.columns:
@@ -889,11 +798,16 @@ else:
 
 # --- SLA CALCULATIONS ---
 total_v = len(df)
-tto_met_count = df['TTO_Done'].sum() if 'TTO_Done' in df.columns else 0
-ttr_met_count = df['TTR_Done'].sum() if 'TTR_Done' in df.columns else 0
+
+# Use the columns created by master_data_sync.py to show real-time breaches
+tto_met_count = int(df['TTO MET'].sum()) if 'TTO MET' in df.columns else 0
+ttr_met_count = int(df['TTR MET'].sum()) if 'TTR MET' in df.columns else 0
+
+# Breaches are the remaining tickets from the total volume
 tto_breach_count = total_v - tto_met_count
 ttr_breach_count = total_v - ttr_met_count
 
+# Calculate real-time percentages
 tto_perf_pct = (tto_met_count / total_v * 100) if total_v > 0 else 0
 ttr_perf_pct = (ttr_met_count / total_v * 100) if total_v > 0 else 0
 tto_breach_pct = 100 - tto_perf_pct if total_v > 0 else 0
@@ -905,89 +819,112 @@ if aged_count > 0:
 
 st.markdown(f'<div class="header-box"><h2>CXP ANALYTICS: {selected_unit.upper()}</h2></div>', unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["Main Dashboard", "Personnel Performance", "Group Hierarchy", "Executive Report"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Main Dashboard", "Personnel Performance", "Group Hierarchy", "Executive Report", "Audit History"])
 
+# --- TAB 1: MAIN DASHBOARD ---
 with tab1:
     st.markdown('<span class="section-header">Performance & Breach Overview</span>', unsafe_allow_html=True)
     
+    # 1. TTO & TTR Metrics Rows
     st.markdown("#### TTO Metrics")
     c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi_card("TTO Perf %", f"{tto_perf_pct:.1f}%", color="#2E7D32" if tto_perf_pct >= 90 else "#FF6600")
-    with c2: kpi_card("TTO Met", f"{tto_met_count}", color="#2E7D32")
-    with c3: kpi_card("TTO Breach %", f"{tto_breach_pct:.1f}%", color="#D32F2F")
-    with c4: kpi_card("TTO Breach", tto_breach_count, color="#D32F2F")
+    with c1: kpi_card("TTO PERF %", f"{tto_perf_pct:.1f}%", color="#2E7D32" if tto_perf_pct >= 90 else "#FF6600")
+    with c2: kpi_card("TTO MET", f"{tto_met_count}", color="#2E7D32")
+    with c3: kpi_card("TTO BREACH %", f"{tto_breach_pct:.1f}%", color="#D32F2F")
+    with c4: kpi_card("TTO BREACH", tto_breach_count, color="#D32F2F")
 
     st.markdown("#### TTR Metrics")
     c5, c6, c7, c8 = st.columns(4)
-    with c5: kpi_card("TTR Perf %", f"{ttr_perf_pct:.1f}%", color="#2E7D32" if ttr_perf_pct >= 90 else "#FF6600")
-    with c6: kpi_card("TTR Met", f"{ttr_met_count}", color="#2E7D32")
-    with c7: kpi_card("TTR Breach %", f"{ttr_breach_pct:.1f}%", color="#D32F2F")
-    with c8: kpi_card("TTR Breach", ttr_breach_count, color="#D32F2F")
+    with c5: kpi_card("TTR PERF %", f"{ttr_perf_pct:.1f}%", color="#2E7D32" if ttr_perf_pct >= 90 else "#FF6600")
+    with c6: kpi_card("TTR MET", f"{ttr_met_count}", color="#2E7D32")
+    with c7: kpi_card("TTR BREACH %", f"{ttr_breach_pct:.1f}%", color="#D32F2F")
+    with c8: kpi_card("TTR BREACH", ttr_breach_count, color="#D32F2F")
 
+    # 2. Overall Metrics Row
     st.write("### Overall Metrics")
-    c9, c10, c11, _ = st.columns([1,1,1,1])
-    with c9: kpi_card("Total Volume", total_v, color="#1F3B4D")
-    with c10: kpi_card("Total Backlog", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
-    with c11: kpi_card("Aged (>30 Days)", aged_count, color="#7B1FA2")
+    c9, c10, c11 = st.columns(3)
+    with c9: kpi_card("TOTAL VOLUME", total_v, color="#1F3B4D")
+    with c10: kpi_card("TOTAL BACKLOG", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
+    with c11: kpi_card("AGED (>30 DAYS)", aged_count, color="#7B1FA2")
 
+    # Dynamic Status Row (PENDING, ASSIGNED, etc.)
     if 'Status' in df.columns:
         status_counts = df['Status'].value_counts()
-        if not status_counts.empty:
-            stat_cols = st.columns(len(status_counts))
-            for i, (name, count) in enumerate(status_counts.items()):
-                with stat_cols[i]:
-                    s_color = "#2E7D32" if name.lower() == 'closed' else "#1976D2" if name.lower() == 'assigned' else "#FBC02D" if name.lower() == 'resolved' else "#FF6600"
-                    kpi_card(name, count, color=s_color)
+        stat_cols = st.columns(len(status_counts))
+        for i, (name, count) in enumerate(status_counts.items()):
+            with stat_cols[i]:
+                kpi_card(name.upper(), count, color="#FF6600")
 
+    # --- SAFETY CHECK FOR COLUMN NAMES ---
+    # This finds 'Start date' even if it is named 'Start Date ' or 'start_date'
+    sd_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
+    org_col_name = next((c for c in df.columns if 'organization' in c.lower()), 'Organization Name')
+
+    # 3. Detailed Ticket Breakdown
     st.markdown('<span class="section-header">Detailed Ticket Breakdown</span>', unsafe_allow_html=True)
     
-    display_cols = ['Ref', 'Title', 'Start date', a_col, org_col]
-    if pr_col:
-        display_cols.append(pr_col)
-    
-    available_cols = [c for c in display_cols if c in df_base.columns]
+    available_cols = [c for c in ['Ref', 'Title', sd_col, 'Agent', org_col_name, 'Pending reason'] if c and c in df.columns]
     
     col_p, col_a = st.columns(2)
     with col_p:
         st.subheader("Pending Tickets")
-        if not df_pending.empty:
-            st.dataframe(df_pending[available_cols], use_container_width=True, hide_index=True)
+        if not df_pending.empty and sd_col:
+            temp_p = df_pending.copy()
+            # Force conversion to datetime and then format as string with Time
+            temp_p[sd_col] = pd.to_datetime(temp_p[sd_col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+            st.dataframe(temp_p[available_cols], use_container_width=True, hide_index=True)
         else:
-            st.info("No pending tickets found.")
+            st.info("No pending tickets or missing date column.")
             
     with col_a:
         st.subheader("Aged Tickets (>30 Days)")
-        if not df_aged.empty:
-            st.dataframe(df_aged[available_cols], use_container_width=True, hide_index=True)
+        if not df_aged.empty and sd_col:
+            temp_a = df_aged.copy()
+            temp_a[sd_col] = pd.to_datetime(temp_a[sd_col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+            st.dataframe(temp_a[available_cols], use_container_width=True, hide_index=True)
         else:
             st.success("No aged tickets found.")
 
-    if org_col in df.columns:
-        st.markdown('<span class="section-header">Top 10 Customers by Ticket Volume</span>', unsafe_allow_html=True)
-        top_cust = df.groupby(org_col)['Ref'].count().reset_index().sort_values('Ref', ascending=False).head(10)
+    # 4. Top 10 Customers Chart & Table
+    st.markdown('<span class="section-header">Top 10 Customers by Ticket Volume</span>', unsafe_allow_html=True)
+    if org_col_name in df.columns:
+        top_cust = df.groupby(org_col_name)['Ref'].count().reset_index().sort_values('Ref', ascending=False).head(10)
         top_cust.columns = ['Customer Name', 'Ticket Count']
-        c_chart, c_table = st.columns([1.5, 1])
+        
+        c_chart, c_table = st.columns([2, 1])
         with c_chart:
             fig_cust = px.bar(top_cust, x='Ticket Count', y='Customer Name', orientation='h', color_discrete_sequence=['#FF6600'])
-            fig_cust.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', yaxis={'categoryorder':'total ascending'})
+            fig_cust.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_cust, use_container_width=True)
         with c_table:
-            st.dataframe(top_cust, use_container_width=True, hide_index=True, height=300)
+            st.dataframe(top_cust, use_container_width=True, hide_index=True, height=400)
 
-    if 'Start date' in df.columns and not df.empty:
-        df['Month'] = df['Start date'].dt.to_period('M').astype(str)
+    # 5. Monthly SLA Analysis Chart & Performance Table
+    st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
+    if sd_col:
+        df['Month'] = pd.to_datetime(df[sd_col], errors='coerce').dt.strftime('%Y-%m')
         monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum'}).reset_index()
         monthly['TTO %'] = (monthly['TTO_Done'] / monthly['Ref'] * 100).round(1)
         monthly['TTR %'] = (monthly['TTR_Done'] / monthly['Ref'] * 100).round(1)
         
-        st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
-        cl, cr = st.columns([1.5, 1])
+        cl, cr = st.columns([2, 1])
         with cl:
-            fig = px.bar(monthly, x='Month', y=['TTO %', 'TTR %'], barmode='group', color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'})
-            fig.update_layout(height=280, margin=dict(l=0,r=0,t=10,b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
-            st.plotly_chart(fig, use_container_width=True)
+            fig_sla = px.bar(monthly, x='Month', y=['TTO %', 'TTR %'], barmode='group', color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'})
+            fig_sla.update_layout(height=350, margin=dict(l=0, r=0, t=20, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
+            st.plotly_chart(fig_sla, use_container_width=True)
         with cr:
-            st.dataframe(monthly[['Month', 'Ref', 'TTO %', 'TTR %']], use_container_width=True, hide_index=True, height=280)
+            st.markdown("#### Monthly Performance Summary")
+            st.dataframe(monthly[['Month', 'Ref', 'TTO %', 'TTR %']], use_container_width=True, hide_index=True, height=350)
+
+# --- 4. DASHBOARD CONTENT WRAPPER ---
+def render_dashboard_content(df):
+    """
+    Wrap all your metrics, tabs, and charts in this function.
+    This is what the fragment will refresh every 30 seconds.
+    """
+    # 1. KPIs
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Tickets", len(df))
 
 with tab2:
     
@@ -1034,36 +971,213 @@ with tab2:
         )
     else:
         st.warning("No Personnel data found. Please ensure 'Agent' exists in your data source.")
-with tab3:
-    st.markdown('<span class="section-header">Conglomerate & Parent Group Explorer</span>', unsafe_allow_html=True)
-    
-    parent_summary = df_base.groupby('Parent_Company').agg({'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'}).reset_index().sort_values('Ref', ascending=False)
-    parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).round(1)
-    parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
-    
-    st.write("#### Top Customers by Parent Group")
-    st.dataframe(parent_summary, use_container_width=True, hide_index=True)
-    st.markdown("---")
-    
-    st.write("#### Parent Group Ticket Distribution")
-    parent_list = sorted(df_base['Parent_Company'].unique().tolist())
-    target_parent = st.selectbox("Select Parent Conglomerate", parent_list)
-    
-    if target_parent and org_col in df_base.columns:
-        hierarchy_df = df_base[df_base['Parent_Company'] == target_parent]
-        subsidiaries = hierarchy_df.groupby(org_col).agg({'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'}).reset_index().sort_values('Ref', ascending=False)
-        subsidiaries['TTO %'] = (subsidiaries['TTO_Done'] / subsidiaries['Ref'] * 100).round(1)
-        subsidiaries['TTR %'] = (subsidiaries['TTR_Done'] / subsidiaries['Ref'] * 100).round(1)
-        subsidiaries.columns = ['Subsidiary/Brand', 'Ticket Count', 'TTO Met', 'TTR Met', 'TTO Compliance %', 'TTR Compliance %']
+# --- TAB 3: GROUP HIERARCHY ---
+    with tab3:
+        st.markdown('<div class="section-header" style="color:#FF6600; font-size:1.5rem; font-weight:bold; margin-bottom:20px;">Conglomerate & Parent Group Explorer</div>', unsafe_allow_html=True)
         
-        c_left, c_right = st.columns([1, 1.2])
-        with c_left:
-            st.metric(f"Total Tickets: {target_parent}", len(hierarchy_df))
-            st.dataframe(subsidiaries, use_container_width=True, hide_index=True)
-        with c_right:
-            fig_sub = px.bar(subsidiaries.head(10), x='Ticket Count', y='Subsidiary/Brand', orientation='h', title=f"Top 10 Customers in {target_parent}", color_discrete_sequence=['#FF6600'])
-            fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_sub, use_container_width=True)
+        # FORCE MAPPING: Ensure the function runs on the current dataframe
+        org_col_for_mapping = next((c for c in df.columns if 'organization' in c.lower() or 'customer' in c.lower()), None)
+        if org_col_for_mapping:
+            df['Parent_Company'] = df[org_col_for_mapping].apply(get_parent_company)
+
+        if 'Parent_Company' in df.columns:
+            # 1. Top Customers Table (Using 'df' instead of 'df_base')
+            parent_summary = df.groupby('Parent_Company').agg({
+                'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
+            }).reset_index().sort_values('Ref', ascending=False)
+
+            parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).fillna(0).round(1)
+            parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
+            
+            st.write("#### Top Customers by Parent Group")
+            st.dataframe(parent_summary, use_container_width=True, hide_index=True)
+            st.markdown("---")
+        
+            # 2. Parent Group Distribution
+            st.write("#### Parent Group Ticket Distribution")
+            parent_list = sorted(df['Parent_Company'].dropna().unique().tolist())
+            target_parent = st.selectbox("Select Parent Conglomerate", options=parent_list, key="parent_explorer_select")
+            
+            if target_parent:
+                hierarchy_df = df[df['Parent_Company'] == target_parent]
+                
+                expected_columns = ['Organization->Name', 'Organization Name', 'Organization', 'Customer', 'Subsidiary']
+                actual_org_col = next((c for c in expected_columns if c in hierarchy_df.columns), None)
+                
+                if actual_org_col:
+                    subsidiaries = hierarchy_df.groupby(actual_org_col).agg({
+                        'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
+                    }).reset_index().sort_values('Ref', ascending=False)
+                    
+                    subsidiaries['TTO %'] = (subsidiaries['TTO_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
+                    subsidiaries['TTR %'] = (subsidiaries['TTR_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
+                    subsidiaries.columns = ['Subsidiary/Brand', 'Ticket Count', 'TTO Met', 'TTR Met', 'TTO Compliance %', 'TTR Compliance %']
+                    
+                    c_left, c_right = st.columns([1, 1.2])
+                    with c_left:
+                        st.metric(f"Total Tickets: {target_parent}", len(hierarchy_df))
+                        st.dataframe(subsidiaries, use_container_width=True, hide_index=True)
+                    with c_right:
+                        fig_sub = px.bar(
+                            subsidiaries.head(10).sort_values('Ticket Count', ascending=True), 
+                            x='Ticket Count', y='Subsidiary/Brand', orientation='h', 
+                            title=f"Top 10 Customers in {target_parent}",
+                            color_discrete_sequence=['#FF6600'], template="plotly_dark"
+                        )
+                        fig_sub.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                        st.plotly_chart(fig_sub, use_container_width=True)
+        else:
+            st.warning("Mapping column 'Parent_Company' not found.")
+
+# --- TAB 4: EXECUTIVE REPORT ---
+with tab4:
+    st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
+    
+    # 1. Safe Date Label (Prevents TypeError: 'NoneType' object is not subscriptable)
+    if 'selected_dates' in locals() and isinstance(selected_dates, (list, tuple)) and len(selected_dates) == 2:
+        date_label = f"{selected_dates[0]} to {selected_dates[1]}"
+    else:
+        date_label = "Full Operational Range"
+
+    st.caption(f"Operational Scope: {selected_unit} | Period: {date_label}")
+
+    # 2. Performance Metrics Calculation
+    # Uses column names established in your master_data_sync script
+    current_total = len(df) if 'df' in locals() else 0
+    
+    # Dynamic column mapping to match your MySQL 'analytics_data' table
+    tto_col = 'TTO MET' if 'TTO MET' in df.columns else 'TTO_Done'
+    ttr_col = 'TTR MET' if 'TTR MET' in df.columns else 'TTR_Done'
+
+    rep_tto = (df[tto_col].sum() / current_total * 100) if current_total > 0 and tto_col in df.columns else 0
+    rep_ttr = (df[ttr_col].sum() / current_total * 100) if current_total > 0 and ttr_col in df.columns else 0
+
+    # Display Top Metrics Row
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Selected Volume", f"{current_total:,}")
+    m2.metric("TTO Compliance", f"{rep_tto:.1f}%")
+    m3.metric("TTR Compliance", f"{rep_ttr:.1f}%")
+    m4.metric("Aged Backlog", aged_count if 'aged_count' in locals() else 0)
+
+    st.divider()
+
+    # 3. Risk Analysis Section
+    col_risk, col_drivers = st.columns(2)
+    
+    with col_risk:
+        st.error(f"### Critical Risks\n* **Aged Tickets:** {aged_count if 'aged_count' in locals() else 0}\n* **SLA Breaches:** {current_total - df[ttr_col].sum() if ttr_col in df.columns else 0}")
+    
+    with col_drivers:
+        st.info("### Delay Drivers\nTop factors currently impacting resolution times include pending vendor feedback and high-complexity service holds.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 4. Board Assets (PDF Generation)
+    st.subheader("Board Meeting Assets")
+    if st.button("PREPARE PDF REPORT", use_container_width=True):
+        # Calculation for breach count to pass into PDF
+        ttr_breach_count = (current_total - df[ttr_col].sum()) if ttr_col in df.columns else 0
+        
+        pdf_bytes = generate_board_pdf(
+            current_total, 
+            0, 
+            rep_tto, 
+            rep_ttr, 
+            aged_count if 'aged_count' in locals() else 0, 
+            ttr_breach_count, 
+            selected_unit, 
+            date_label, 
+            "General Analysis"
+        )
+        st.download_button(
+            label="📄 DOWNLOAD BOARD-READY PDF BROCHURE",
+            data=pdf_bytes,
+            file_name=f"Executive_Summary_{datetime.now().strftime('%Y%m%d')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+# --- TAB 5: AUDIT HISTORY ---
+with tab5:
+    st.markdown('<span class="section-header">Full Ticket Status Audit Trail</span>', unsafe_allow_html=True)
+    
+    view_mode = st.radio("Select View Mode:", ["Search Specific Ticket", "View Entire Historical Log"], horizontal=True, key="audit_view_radio")
+
+    try:
+        # Use the SQLAlchemy engine instead of sqlite3.connect(DB_FILE)
+        with engine.connect() as conn:
+            if view_mode == "Search Specific Ticket":
+                search_ref = st.text_input("Enter Ticket Ref ID:", placeholder="e.g. R-154009", key="ticket_search_input")
+                
+                if search_ref:
+                    # Using text() for MySQL compatibility and security
+                    query = text("SELECT Status_Log_Date, Ref, Current_Status, Agent FROM history_table WHERE Ref = :ref ORDER BY Status_Log_Date ASC")
+                    history_df = pd.read_sql(query, conn, params={"ref": search_ref.strip()})
+                    
+                    if not history_df.empty:
+                        # 1. Calculate Duration Logic
+                        history_df['Status_Log_Date'] = pd.to_datetime(history_df['Status_Log_Date'])
+                        history_df['Duration'] = history_df['Status_Log_Date'].diff().shift(-1)
+                        
+                        def format_duration(td):
+                            if pd.isna(td): return "Active Now"
+                            days = td.days
+                            hours, remainder = divmod(td.seconds, 3600)
+                            minutes, _ = divmod(remainder, 60)
+                            return f"{days}d {hours}h {minutes}m" if days > 0 else f"{hours}h {minutes}m"
+
+                        history_df['Time Spent'] = history_df['Duration'].apply(format_duration)
+                        
+                        # Prepare for display
+                        display_df = history_df.sort_values(by='Status_Log_Date', ascending=False).copy()
+                        display_df.rename(columns={'Status_Log_Date': 'Date & Time', 'Current_Status': 'Status', 'Ref': 'Ticket ID'}, inplace=True)
+                        display_df['Date & Time'] = display_df['Date & Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+                        # 2. High-Contrast Styling
+                        def apply_hc_style(val):
+                            s = str(val).strip().lower()
+                            if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
+                            if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
+                            if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
+                            if 'escalated' in s: return 'background-color: #dc3545; color: white; font-weight: bold;'
+                            return ''
+
+                        st.dataframe(
+                            display_df[['Date & Time', 'Status', 'Time Spent', 'Agent']].style.applymap(apply_hc_style, subset=['Status']),
+                            use_container_width=True, 
+                            hide_index=True
+                        )
+                    else:
+                        st.warning(f"No records found for Ticket ID: {search_ref}")
+
+            else:
+                # Full Log View (Limited to 1000 for performance)
+                full_query = text("SELECT Status_Log_Date as 'Date & Time', Ref as 'Ticket ID', Current_Status as 'Status', Agent FROM history_table ORDER BY Status_Log_Date DESC LIMIT 1000")
+                full_df = pd.read_sql(full_query, conn)
+
+                if not full_df.empty:
+                    full_df['Date & Time'] = pd.to_datetime(full_df['Date & Time']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+                    def apply_full_hc_style(val):
+                        s = str(val).strip().lower()
+                        if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
+                        if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
+                        if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
+                        return 'background-color: #6c757d; color: white;'
+
+                    st.dataframe(
+                        full_df.style.applymap(apply_full_hc_style, subset=['Status']),
+                        use_container_width=True, 
+                        hide_index=True
+                    )
+                    
+                    csv = full_df.to_csv(index=False).encode('utf-8')
+                    st.download_button("Export Audit Trail (CSV)", csv, "audit_trail.csv", "text/csv")
+                else:
+                    st.info("The history table is currently empty.")
+
+    except Exception as e:
+        st.error(f"MySQL Audit Error: {str(e)}")
 
 # --- 1. PDF CLASS DEFINITION ---
 class SITS_Report(FPDF):
@@ -1174,54 +1288,6 @@ def generate_board_pdf(total_v, backlog, tto, ttr, aged, breaches, unit, dates, 
     # Return as safe latin-1 bytes for Streamlit
     return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-with tab4:
-    st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
-    st.caption(f"Operational Scope: {selected_unit}")
-
-    # Derived solely from the date-filtered 'df' and 'df_pending'
-    current_total = len(df)
-    current_backlog = len(df_pending)
-    
-    top_reasons_text = "No pending tickets in this period."
-    if not df_pending.empty and pr_col:
-        top_reasons = df_pending[pr_col].value_counts().head(3).index.tolist()
-        top_reasons_text = ", ".join(top_reasons)
-
-    # Metric Row
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Selected Volume", f"{current_total:,}")
-    m2.metric("Active Backlog", current_backlog)
-    m3.metric("TTO %", f"{tto_perf_pct:.1f}%")
-    m4.metric("TTR %", f"{ttr_perf_pct:.1f}%")
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.error(f"**Critical Risks**\n- Aged Tickets: {aged_count}\n- SLA Breaches: {ttr_breach_count:,}")
-    with c2:
-        st.warning(f"**Top Delay Drivers**\n{top_reasons_text}")
-
-    # PDF Download
-    st.subheader("Board Meeting Assets")
-    
-    # Format the date label for the report
-    date_label = f"{selected_dates[0]} to {selected_dates[1]}" if selected_dates else "All Time"
-    
-    pdf_output = generate_board_pdf(
-        current_total, current_backlog, tto_perf_pct, ttr_perf_pct, 
-        aged_count, ttr_breach_count, selected_unit, 
-        date_label, top_reasons_text
-    )
-
-    st.download_button(
-        label="📄 DOWNLOAD BOARD-READY PDF BROCHURE",
-        data=pdf_output,
-        file_name=f"Executive_Report_{selected_unit}_{datetime.now().strftime('%Y%m%d')}.pdf",
-        mime="application/pdf",
-        use_container_width=True
-    )
-
 # --- 1. THE HARD REFRESH FUNCTION ---
 def refresh_data():
     """Wipes the existing DB, runs the sync script, and reloads state"""
@@ -1280,16 +1346,6 @@ def sync_dashboard_ui():
         render_dashboard_content(st.session_state.data)
     else:
         st.warning("Database currently empty. Please click 'Refresh & Wipe'.")
-
-# --- 4. DASHBOARD CONTENT WRAPPER ---
-def render_dashboard_content(df):
-    """
-    Wrap all your metrics, tabs, and charts in this function.
-    This is what the fragment will refresh every 30 seconds.
-    """
-    # 1. KPIs
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Tickets", len(df))
 
 # --- 5. MAIN APP EXECUTION ---
 if not st.session_state.data.empty:
