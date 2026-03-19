@@ -10,12 +10,12 @@ DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3306"
+DB_PORT = "3309"
 
 TTO_SLA_HOURS = 4
 TTR_SLA_HOURS = 24
 
-connection_url = f"mysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+connection_url = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 engine = create_engine(connection_url, pool_pre_ping=True)
 
 def calculate_performance(row):

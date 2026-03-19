@@ -28,11 +28,11 @@ DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3306"
+DB_PORT = "3309"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
-CONNECTION_URL = f"mysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+CONNECTION_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- 2. PAGE CONFIG ---
 st.set_page_config(
