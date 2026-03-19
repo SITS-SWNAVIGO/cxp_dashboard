@@ -24,11 +24,11 @@ count = st_autorefresh(interval=300000, key="fivedatarefresh")
 
 # --- 1. CONFIGURATION (Direct MySQL Connection) ---
 # We use the same credentials as your master_data_sync.py
-DB_HOST = "staging_sits_analytics"
+DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3306"
+DB_PORT = "3309"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
