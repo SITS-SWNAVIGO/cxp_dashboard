@@ -10,7 +10,7 @@ DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3309"
+DB_PORT = "3306"
 
 TTO_SLA_HOURS = 4
 TTR_SLA_HOURS = 24
