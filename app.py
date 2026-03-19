@@ -34,7 +34,7 @@ DB_PORT = "3309"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
-CONNECTION_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+CONNECTION_URL = f"mysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- 2. PAGE CONFIG ---
 st.set_page_config(
