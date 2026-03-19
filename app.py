@@ -18,8 +18,6 @@ import os
 import master_data_sync 
 import sqlite3
 from streamlit_autorefresh import st_autorefresh
-import mysql.connector
-
 
 # interval is in milliseconds (300,000 ms = 5 minutes)
 count = st_autorefresh(interval=300000, key="fivedatarefresh")
@@ -34,11 +32,11 @@ DB_PORT = "3309"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
-CONNECTION_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+CONNECTION_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- 2. PAGE CONFIG ---
 st.set_page_config(
-    page_title="CXP Performance Pro", 
+    page_title="CXP Analytics", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
@@ -486,84 +484,19 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
-import msal
-import base64
+import streamlit as st
+import pandas as pd
 import os
+import base64
+from io import BytesIO
+import requests
+from sqlalchemy import text
 
-# --- 1. AD CONFIGURATION ---
-conf = st.secrets["azure_ad"]
-msal_app = msal.ConfidentialClientApplication(
-    conf["client_id"],
-    authority=conf["authority"],
-    client_credential=conf["client_secret"]
-)
-
-def check_user_authorization(email):
-    """Verifies if the email exists in the 'users' table and returns their role."""
-    try:
-        with engine.connect() as conn:
-            # Case-insensitive match for the email
-            query = text("SELECT role FROM users WHERE LOWER(username) = LOWER(:email)")
-            result = conn.execute(query, {"email": email}).fetchone()
-            return result[0] if result else None
-    except Exception as e:
-        st.error(f"Database Auth Error: {e}")
-        return None
-
-# --- 2. LOGIN UI & AUTH LOGIC ---
-if not st.session_state.get("authenticated"):
+# --- 2. LOGIN UI ---
+if not st.session_state.authenticated:
     st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
-    
-    # Catching the redirect code from the URL
-    params = st.query_params
-    
-    if "code" in params:
-        # Step: Exchange the temporary code for a User Token
-        result = msal_app.acquire_token_by_authorization_code(
-            params["code"],
-            scopes=["User.Read"],
-            redirect_uri=conf["redirect_uri"]
-        )
-        
-        if "id_token_claims" in result:
-            claims = result["id_token_claims"]
-            email = claims.get("preferred_username")
-            
-            # CRITICAL: Wrapper to catch DB/Module errors to prevent looping
-            try:
-                role = check_user_authorization(email)
-                
-                if role:
-                    st.session_state.authenticated = True
-                    st.session_state.username = email
-                    st.session_state.user_name = claims.get("name")
-                    st.session_state.user_role = role
-                    
-                    # Load Dashboard Data
-                    db_df = load_from_db()
-                    if not db_df.empty:
-                        st.session_state.data = process_data_safely(db_df)
-                    
-                    st.query_params.clear()
-                    st.rerun()
-                else:
-                    # DISPLAY ACCESS DENIED AND STOP
-                    st.error(f"🚫 Access Denied: {email} is not authorized in the SITS Analytics Database.")
-                    st.info("Please contact the system administrator to add your email to the whitelist.")
-                    st.stop() # Prevents the loop
-            
-            except Exception as e:
-                st.error(f"⚠️ System Error during Authorization: {e}")
-                st.warning("This usually happens if database modules (mysql) are missing or the connection is blocked.")
-                st.stop() # Prevents the loop
-        else:
-            st.error("Authentication failed. Microsoft did not return valid user info.")
-            if "error_description" in result:
-                st.warning(result["error_description"])
-            st.stop()
-
-    # Login Visuals (Only shown if no code is present or session is new)
     _, center_col, _ = st.columns([1, 1.5, 1])
+    
     with center_col:
         logo_html = ""
         if 'LOGO_PATH' in globals() and os.path.exists(LOGO_PATH):
@@ -572,17 +505,77 @@ if not st.session_state.get("authenticated"):
             logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:120px; margin-bottom:20px;">'
 
         st.markdown(f'''
-            <div style="text-align:center; margin-top:10vh; background:white; padding:40px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+            <div style="text-align:center; margin-top:10vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
                 {logo_html}
                 <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
-                <p style="font-size:0.8rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px; margin-bottom:30px;">Authorized Access Only</p>
+                <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">Secure Access Portal</p>
             </div>
         ''', unsafe_allow_html=True)
         
-        auth_url = msal_app.get_authorization_request_url(scopes=["User.Read"], redirect_uri=conf["redirect_uri"])
-        st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration: none;"><div style="background-color: #2F2F2F; color: white; padding: 12px; text-align: center; border-radius: 5px; font-weight: bold; margin-top: -20px;">SIGN IN WITH MICROSOFT 365</div></a>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        input_user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
+        input_pass = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
         
+        if st.button("LOGIN", use_container_width=True):
+            role = get_db_user(input_user, input_pass)
+            if role:
+                st.session_state.authenticated = True
+                st.session_state.user_role = role.lower()
+                st.session_state.username = input_user
+                
+                # Global Auto-Load: Load existing data if it exists in the database
+                db_df = load_from_db()
+                if not db_df.empty:
+                    st.session_state.data = process_data_safely(db_df)
+                st.rerun()
+            else:
+                st.error("Invalid Username or Password")
     st.stop()
+
+    # --- 3. SUPER ADMIN CONTROL PANEL ---
+if st.session_state.user_role == "super_admin":
+    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
+        t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
+        
+        with t1:
+            st.subheader("Add New Account")
+            nu, np = st.columns(2)
+            new_u = nu.text_input("Username", key="reg_u")
+            new_p = np.text_input("Password", type="password", key="reg_p")
+            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="reg_r")
+            if st.button("Create User Account", use_container_width=True):
+                if new_u and new_p:
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(
+                                text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
+                                {"u": new_u, "p": new_p, "r": new_r}
+                            )
+                        st.success(f"User {new_u} created!")
+                    except:
+                        st.error("Username already exists.")
+
+        with t2:
+            st.subheader("System Health")
+            if st.button("Test Connection", use_container_width=True):
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text("SELECT 1"))
+                    st.success("✅ Database Connected")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+        with t3:
+            st.subheader("User Directory")
+            try:
+                users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
+                st.dataframe(users_df, use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Error: {e}")
+        
+        st.divider()
+        if st.button("EXIT ADMIN SESSION", use_container_width=True, type="secondary"):
+            logout()
 
 # --- 4. DATA INITIALIZATION GATE ---
 if st.session_state.data.empty:
