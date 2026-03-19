@@ -19,6 +19,8 @@ import master_data_sync
 import sqlite3
 from streamlit_autorefresh import st_autorefresh
 import mysql.connector
+import pymysql
+pymysql.install_as_MySQLdb()
 
 
 # interval is in milliseconds (300,000 ms = 5 minutes)
@@ -34,7 +36,7 @@ DB_PORT = "3309"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
-CONNECTION_URL = f"mysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+CONNECTION_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- 2. PAGE CONFIG ---
 st.set_page_config(

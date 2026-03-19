@@ -7,6 +7,7 @@ openpyxl
 fpdf2
 sqlalchemy
 mysql-connector-python
+mysqlclient
 msal
 streamlit-autorefresh
 pymysql
