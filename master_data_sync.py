@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from sqlalchemy import create_engine, text, DateTime, String
 import mysql.connector
+import pymysql
 
 # --- 1. CONFIGURATION ---
 DB_HOST = "213.210.36.220"
@@ -15,7 +16,7 @@ DB_PORT = "3309"
 TTO_SLA_HOURS = 4
 TTR_SLA_HOURS = 24
 
-connection_url = f"mysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+connection_url = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 engine = create_engine(connection_url, pool_pre_ping=True)
 
 def calculate_performance(row):
