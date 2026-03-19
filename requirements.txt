@@ -9,3 +9,4 @@ sqlalchemy
 pymysql
 msal
 streamlit-autorefresh
+mysql-connector-python
