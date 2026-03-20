@@ -484,137 +484,76 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
+import msal
 import streamlit as st
-import pandas as pd
-import os
-import base64
-from io import BytesIO
 import requests
-from sqlalchemy import text
 
-# --- 2. LOGIN UI ---
-if not st.session_state.authenticated:
+# --- AZURE AD CONFIGURATION ---
+CLIENT_ID = "108da7d7-a2de-466a-b55f-0e2536ffdfc7"
+CLIENT_SECRET = "bfs8Q~gNHEghcmmIkufgkeGZe.AK.018nddpaa5~"
+TENANT_ID = "common" # Or your specific Tenant ID if preferred
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+REDIRECT_URI = "https://cxp.navigo.lk/"
+SCOPE = ["User.Read"]
+
+def get_msal_app():
+    return msal.ConfidentialClientApplication(
+        CLIENT_ID, authority=AUTHORITY, client_credential=CLIENT_SECRET
+    )
+
+# --- 2. LOGIN UI & LOGIC ---
+if not st.session_state.get("authenticated"):
     st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
     _, center_col, _ = st.columns([1, 1.5, 1])
     
     with center_col:
-        logo_html = ""
-        if 'LOGO_PATH' in globals() and os.path.exists(LOGO_PATH):
-            with open(LOGO_PATH, "rb") as f:
-                bin_str = base64.b64encode(f.read()).decode()
-            logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:120px; margin-bottom:20px;">'
-
         st.markdown(f'''
             <div style="text-align:center; margin-top:10vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
-                {logo_html}
                 <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
                 <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">Secure Access Portal</p>
+                <p style="font-size:0.8rem; color:#444; margin-top:10px;">Sign in with your corporate account to continue.</p>
             </div>
         ''', unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
-        input_user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
-        input_pass = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
         
-        if st.button("LOGIN", use_container_width=True):
-            role = get_db_user(input_user, input_pass)
-            if role:
+        msal_app = get_msal_app()
+        auth_url = msal_app.get_authorization_request_url(SCOPE, redirect_uri=REDIRECT_URI)
+        
+        st.link_button("LOGIN WITH MICROSOFT", auth_url, use_container_width=True, type="primary")
+
+        # Handle the Auth Response
+        query_params = st.query_params
+        if "code" in query_params:
+            code = query_params["code"]
+            result = msal_app.acquire_token_by_authorization_code(code, scopes=SCOPE, redirect_uri=REDIRECT_URI)
+            
+            if "access_token" in result:
                 st.session_state.authenticated = True
-                st.session_state.user_role = role.lower()
-                st.session_state.username = input_user
+                st.session_state.username = result.get("id_token_claims").get("name")
+                st.session_state.user_email = result.get("id_token_claims").get("preferred_username")
                 
-                # Global Auto-Load: Load existing data if it exists in the database
-                db_df = load_from_db()
-                if not db_df.empty:
-                    st.session_state.data = process_data_safely(db_df)
+                # Role Assignment Logic
+                email = st.session_state.user_email.lower()
+                if email == "malki.p@sits.lk":
+                    st.session_state.user_role = "super_admin"
+                elif "@sits.lk" in email:
+                    st.session_state.user_role = "admin"
+                else:
+                    st.session_state.user_role = "viewer"
+
+                # Load data from the local database file
+                db_df = load_data() 
+                if db_df is not None:
+                    st.session_state.data = db_df
+                
+                st.query_params.clear()
                 st.rerun()
             else:
-                st.error("Invalid Username or Password")
+                st.error("Authentication failed. Please check your credentials or contact IT.")
+
     st.stop()
-
-    # --- 3. SUPER ADMIN CONTROL PANEL ---
-if st.session_state.user_role == "super_admin":
-    with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
-        t1, t2, t3 = st.tabs(["Register User", "Diagnostics", "User Directory"])
-        
-        with t1:
-            st.subheader("Add New Account")
-            nu, np = st.columns(2)
-            new_u = nu.text_input("Username", key="reg_u")
-            new_p = np.text_input("Password", type="password", key="reg_p")
-            new_r = st.selectbox("Role", ["viewer", "manager", "admin", "super_admin"], key="reg_r")
-            if st.button("Create User Account", use_container_width=True):
-                if new_u and new_p:
-                    try:
-                        with engine.begin() as conn:
-                            conn.execute(
-                                text("INSERT INTO users (username, password, role) VALUES (:u, :p, :r)"),
-                                {"u": new_u, "p": new_p, "r": new_r}
-                            )
-                        st.success(f"User {new_u} created!")
-                    except:
-                        st.error("Username already exists.")
-
-        with t2:
-            st.subheader("System Health")
-            if st.button("Test Connection", use_container_width=True):
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(text("SELECT 1"))
-                    st.success("✅ Database Connected")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-        with t3:
-            st.subheader("User Directory")
-            try:
-                users_df = pd.read_sql(text("SELECT username, role FROM users"), engine)
-                st.dataframe(users_df, use_container_width=True, hide_index=True)
-            except Exception as e:
-                st.error(f"Error: {e}")
-        
-        st.divider()
-        if st.button("EXIT ADMIN SESSION", use_container_width=True, type="secondary"):
-            logout()
-
-# --- 4. DATA INITIALIZATION GATE ---
-if st.session_state.data.empty:
-    _, center_col, _ = st.columns([1, 2, 1])
-    with center_col:
-        st.info(f"System Storage: {get_db_last_updated()}")
-        
-        if st.session_state.user_role in ['super_admin', 'admin']:
-            st.markdown("### Administrative Data Setup")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("RESTORE FROM DATABASE", use_container_width=True):
-                    db_df = load_from_db()
-                    if not db_df.empty:
-                        st.session_state.data = process_data_safely(db_df)
-                        st.rerun()
-            with c2:
-                login_up = st.file_uploader("Upload New Data", type=['xlsx', 'csv'], label_visibility="collapsed")
-                if login_up:
-                    df_up = pd.read_csv(login_up, encoding='latin1') if login_up.name.endswith('.csv') else pd.read_excel(login_up)
-                    processed = process_data_safely(df_up)
-                    save_to_db(processed)
-                    st.session_state.data = processed
-                    st.rerun()
-            
-            if st.button("CONNECT TO LIVE WEB SYNC", use_container_width=True, type="primary"):
-                # ... API logic ...
-                pass
-        else:
-            # Viewers see a simpler load button
-            if st.button("LOAD ANALYTICS VIEW", use_container_width=True):
-                db_df = load_from_db()
-                if not db_df.empty:
-                    st.session_state.data = process_data_safely(db_df)
-                    st.rerun()
-
-    # If script reaches here and data is empty, stop so dashboard doesn't crash
-    st.stop()
-
+    
 # --- 5. DASHBOARD CODE STARTS BELOW ---
 
 # Using a small, styled header instead of st.title
@@ -718,17 +657,29 @@ if 'selected_dates' not in locals():
 if not st.session_state.data.empty:
     df = st.session_state.data.copy()
 
-    # 2. DATE RANGE FILTER
-    # Only filter if selected_dates was successfully created in the sidebar
+# 2. DATE RANGE FILTER
     if selected_dates and len(selected_dates) == 2:
         try:
-            # Ensure 'Start date' is datetime objects
-            df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-            
-            # Filter using .date() to match the date_input format
-            df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
-                    (df['Start date'].dt.date <= selected_dates[1])]
+            # Step 1: Find the actual column name in the data (Start Date, Start date, start date, etc.)
+            actual_date_col = next((c for c in df.columns if c.lower() == 'start date'), None)
+
+            if actual_date_col:
+                # Step 2: Convert the found column to datetime
+                df[actual_date_col] = pd.to_datetime(df[actual_date_col], errors='coerce')
+                
+                # Step 3: Filter using the date components
+                # We use .dt.date to compare exactly with the streamlit date_input objects
+                start_val, end_val = selected_dates[0], selected_dates[1]
+                
+                mask = (df[actual_date_col].dt.date >= start_val) & \
+                       (df[actual_date_col].dt.date <= end_val)
+                
+                df = df.loc[mask].copy()
+            else:
+                st.warning("Date Filter: No column matching 'Start Date' found in the database.")
+                
         except Exception as e:
+            # This will now show you exactly what went wrong if it fails again
             st.error(f"Date Filter Error: {e}")
 
     # 3. CUSTOMER FILTER
