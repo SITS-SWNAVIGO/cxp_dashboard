@@ -718,17 +718,29 @@ if 'selected_dates' not in locals():
 if not st.session_state.data.empty:
     df = st.session_state.data.copy()
 
-    # 2. DATE RANGE FILTER
-    # Only filter if selected_dates was successfully created in the sidebar
+# 2. DATE RANGE FILTER
     if selected_dates and len(selected_dates) == 2:
         try:
-            # Ensure 'Start date' is datetime objects
-            df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-            
-            # Filter using .date() to match the date_input format
-            df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
-                    (df['Start date'].dt.date <= selected_dates[1])]
+            # Step 1: Find the actual column name in the data (Start Date, Start date, start date, etc.)
+            actual_date_col = next((c for c in df.columns if c.lower() == 'start date'), None)
+
+            if actual_date_col:
+                # Step 2: Convert the found column to datetime
+                df[actual_date_col] = pd.to_datetime(df[actual_date_col], errors='coerce')
+                
+                # Step 3: Filter using the date components
+                # We use .dt.date to compare exactly with the streamlit date_input objects
+                start_val, end_val = selected_dates[0], selected_dates[1]
+                
+                mask = (df[actual_date_col].dt.date >= start_val) & \
+                       (df[actual_date_col].dt.date <= end_val)
+                
+                df = df.loc[mask].copy()
+            else:
+                st.warning("Date Filter: No column matching 'Start Date' found in the database.")
+                
         except Exception as e:
+            # This will now show you exactly what went wrong if it fails again
             st.error(f"Date Filter Error: {e}")
 
     # 3. CUSTOMER FILTER
