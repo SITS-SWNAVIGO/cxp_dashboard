@@ -7,17 +7,13 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 import base64
-from sqlalchemy import text
 from fpdf import FPDF
-import streamlit as st
 import master_data_sync  
-from datetime import datetime
-import pandas as pd
 import time
-import os
 import master_data_sync 
 import sqlite3
 from streamlit_autorefresh import st_autorefresh
+import msal
 
 # interval is in milliseconds (300,000 ms = 5 minutes)
 count = st_autorefresh(interval=300000, key="fivedatarefresh")
@@ -483,10 +479,6 @@ def logout():
     st.session_state.username = None
     st.session_state.data = pd.DataFrame()
     st.rerun()
-
-import msal
-import streamlit as st
-import requests
 
 # --- AZURE AD CONFIGURATION ---
 CLIENT_ID = "108da7d7-a2de-466a-b55f-0e2536ffdfc7"
