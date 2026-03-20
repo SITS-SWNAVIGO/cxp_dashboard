@@ -7,14 +7,9 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 import base64
-from sqlalchemy import text
 from fpdf import FPDF
-import streamlit as st
 import master_data_sync  
-from datetime import datetime
-import pandas as pd
 import time
-import os
 import master_data_sync 
 import sqlite3
 from streamlit_autorefresh import st_autorefresh
@@ -24,11 +19,11 @@ count = st_autorefresh(interval=300000, key="fivedatarefresh")
 
 # --- 1. CONFIGURATION (Direct MySQL Connection) ---
 # We use the same credentials as your master_data_sync.py
-DB_HOST = "213.210.36.220"
+DB_HOST = "staging_sits_analytics"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3309"
+DB_PORT = "3306"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
