@@ -19,11 +19,11 @@ count = st_autorefresh(interval=300000, key="fivedatarefresh")
 
 # --- 1. CONFIGURATION (Direct MySQL Connection) ---
 # We use the same credentials as your master_data_sync.py
-DB_HOST = "staging_sits_analytics"
+DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3306"
+DB_PORT = "3309"
 
 # The connection string for MySQL
 # Use "mysql+mysqlconnector" to ensure compatibility
@@ -351,9 +351,7 @@ def get_parent_company(name):
     # Return original name if no keyword matches
     return str(name).strip()
 
-# --- TECHNICIAN TEAM MAPPING ---
 def get_team_from_technician(name):
-    # Standardize input for better matching
     name = str(name).strip()
     
     sits_support = [
@@ -378,26 +376,15 @@ def get_team_from_technician(name):
         "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
         "Sasanka Madusith", "Ositha Buddika"
     ]
-    
-    # ADDED: Software Dept Members
-    software_dept = [
-        "Software Support", "Dev Team", "Application Support" 
-        # Add specific software personnel names here
-    ]
-    
-# ADDED: Enterprise Team Members
-    enterprise_team = [
-        "Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"
-    ]
+    software_dept = ["Software Support", "Dev Team", "Application Support"]
+    enterprise_team = ["Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"]
 
-    # Mapping Logic: Matches names to specific Operational Units
     if name in sits_support: return "SITS IT Support"
     if name in gamma_it: return "Gamma IT"
     if name in service_desk: return "Service Desk"
     if name in software_dept: return "Software Dept"
     if name in enterprise_team: return "Enterprise Team"
     
-    # Returning Unassigned allows you to see names that aren't mapped yet
     return "Unassigned"
 
 def process_data_safely(df):
@@ -478,14 +465,6 @@ def logout():
     st.session_state.username = None
     st.session_state.data = pd.DataFrame()
     st.rerun()
-
-import streamlit as st
-import pandas as pd
-import os
-import base64
-from io import BytesIO
-import requests
-from sqlalchemy import text
 
 # --- 2. LOGIN UI ---
 if not st.session_state.authenticated:
@@ -647,7 +626,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### FILTERS")
 
-    # 1. Date Filter Logic - Restoring the From/To Selectors
+# 1. Date Filter Logic - Restoring the From/To Selectors
     # Dynamically find date column to prevent KeyErrors
     d_col = next((c for c in df_base.columns if 'start' in c.lower() or 'fixed' in c.lower()), None)
     selected_dates = []
