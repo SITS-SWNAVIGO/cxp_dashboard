@@ -1,13 +1,13 @@
-streamlit
+streamlit>=1.25.0
 pandas
 numpy
 plotly
 xlsxwriter
 openpyxl
 fpdf2
-sqlalchemy
+SQLAlchemy>=1.4.0
 pymysql
-msal
+mysqlclient>=2.1.0
 streamlit-autorefresh
 mysql-connector-python
 cryptography
