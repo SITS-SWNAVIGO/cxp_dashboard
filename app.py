@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import requests
 import plotly.express as px
 import os
 from io import BytesIO
@@ -8,36 +7,33 @@ from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 import base64
 from fpdf import FPDF
-import master_data_sync  
+import master_data_sync
 import time
-import master_data_sync 
-import sqlite3
-from streamlit_autorefresh import st_autorefresh
+from pathlib import Path
+import os
+import base64
+from io import BytesIO
+import requests
 
-# interval is in milliseconds (300,000 ms = 5 minutes)
-count = st_autorefresh(interval=300000, key="fivedatarefresh")
-
-# --- 1. CONFIGURATION (Direct MySQL Connection) ---
-# We use the same credentials as your master_data_sync.py
+# --- 1. CONFIGURATION (MySQL Connection) ---
 DB_HOST = "staging_sits_analytics"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
 DB_PORT = "3306"
 
-# The connection string for MySQL
-# Use "mysql+mysqlconnector" to ensure compatibility
+# Using PyMySQL driver (make sure it's installed)
 CONNECTION_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- 2. PAGE CONFIG ---
 st.set_page_config(
-    page_title="CXP Analytics", 
-    layout="wide", 
+    page_title="CXP Analytics",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- 3. DATABASE ENGINE SETUP ---
-# pool_pre_ping=True helps keep the connection alive on the Easypanel server
+# pool_pre_ping=True keeps connection alive
 engine = create_engine(
     CONNECTION_URL,
     pool_size=5,
@@ -46,11 +42,12 @@ engine = create_engine(
 )
 
 # --- 3. SYSTEM INITIALIZATION ---
+@st.cache_resource(show_spinner=False)
 def initialize_system():
-    """Ensures the users table exists in the MySQL database."""
+    """Ensures the users table exists and a super_admin is created."""
     try:
-        with engine.begin() as conn:
-            # Create User Table if missing (MySQL uses VARCHAR for lengths)
+        with engine.connect() as conn:
+            # Create User Table if missing
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS users (
                     username VARCHAR(255) PRIMARY KEY,
@@ -69,14 +66,21 @@ def initialize_system():
                     INSERT INTO users (username, password, role) 
                     VALUES ('admin', 'Admin@CXP', 'super_admin')
                 """))
+                
+        return True
     except Exception as e:
-        st.error(f"Database Initialization Error: {e}")
+        # Log the error but don't break sidebar
+        print(f"Database Initialization Error: {e}")
+        return False
 
-# Run initialization immediately when app starts
-initialize_system()
+# Run initialization
+init_success = initialize_system()
+if not init_success:
+    st.warning("Database not fully initialized. Some functions may fail.")
 
 # --- 4. DATA & AUTH FUNCTIONS ---
 
+@st.cache_data(show_spinner=False)
 def get_db_user(username, password):
     """Authenticates users against the live MySQL database."""
     try:
@@ -85,33 +89,37 @@ def get_db_user(username, password):
             result = conn.execute(query, {"u": username, "p": password}).fetchone()
             return result[0] if result else None
     except Exception as e:
-        st.error(f"Authentication Error: {e}")
+        print(f"Authentication Error: {e}")  # Avoid blocking UI
         return None
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_from_db():
-    """Retrieves the live analytics data pushed by your local sync script."""
+    """Retrieves live analytics data pushed by your local sync script."""
     try:
         with engine.connect() as conn:
             query = text("SELECT * FROM analytics_data")
             return pd.read_sql(query, conn)
     except Exception as e:
-        st.warning("No data found in database. Please run the local sync script.")
+        print(f"No data found in database: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=60)
 def get_db_last_updated():
-    """Displays the current status of the Easypanel database connection."""
+    """Displays current status of the Easypanel database connection."""
     try:
         with engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM analytics_data")).scalar()
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             return f"🟢 Live Connection | Records: {count:,} | Last Check: {now_str}"
-    except Exception:
+    except Exception as e:
+        print(f"DB Connection Error: {e}")
         return "🔴 Database Connection Offline"
 
 # --- LOGO PATH ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+BASE_DIR = Path(__file__).parent
+LOGO_PATH = BASE_DIR / "assets" / "logo.png"
 
+# Initialize session state
 if "data" not in st.session_state:
     st.session_state.data = pd.DataFrame()
 
@@ -301,167 +309,176 @@ def kpi_card(label, value, color="#FF6600", flash=False):
         </div>
     ''', unsafe_allow_html=True)
 
-# --- CORPORATE MAPPING ---
+import pandas as pd
+
 def get_parent_company(name):
     """
-    Collapses individual branches and subsidiaries into a single Parent Conglomerate.
+    Maps individual branches and subsidiaries into a single Parent Conglomerate.
     Uses 'Aggressive Keyword Detection' to catch typos and branches.
     """
-    if pd.isna(name): 
+    if pd.isna(name) or not str(name).strip():
         return "Unassigned"
     
-    # Standardize to uppercase and strip whitespace for matching
     n = str(name).strip().upper()
-    
-    # Mapping Dictionary: Key is the Parent Company, Value is a list of keywords
-    mappings = [
-        ("Hela Clothing", ["HELA", "INDIGLOW", "CLOTHIG"]),
-        ("Central Finance", ["CENTRAL FINANCE", "CF ", "CF-", "CF"]),
-        ("Commercial Bank", ["COMMERCIAL BANK", "COMBANK", "CBC "]),
-        ("Sampath Bank", ["SAMPATH"]),
-        ("Hatton National Bank", ["HATTON NATIONAL", "HNB"]),
-        ("Seylan Bank", ["SEYLAN"]),
-        ("Nations Trust Bank", ["NATIONS TRUST", " NTB"]),
-        ("Pan Asia Bank", ["PAN ASIA"]),
-        ("DFCC Bank", ["DFCC"]),
-        ("John Keells Group", ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"]),
-        ("Hayleys Group", ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"]),
-        ("LOLC / Browns Group", ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"]),
-        ("Vallibel One", ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"]),
-        ("Cargills Group", ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"]),
-        ("Gamma Pizzakraft", ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"]),
-        ("Abans Group", ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"]),
-        ("Softlogic", ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"]),
-        ("Hemas Holdings", ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"]),
-        ("MAS Holdings", ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"]),
-        ("Brandix", ["BRANDIX", "FORTUDE"]),
-        ("SITS Internal", ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"]),
-        ("IWS", [
-            "SWEDISH CARS", "PURE CEYLON BEVARAGE", "IWS LOGISTICS", 
-            "WINDCASTLE", "ART TV", "GERMANIA", "IWS HOLDINGS", 
-            "IWS INVESTEMENTS", "IWS AUTOMOBILES", "DYNACOM ELECTRONICS", "EUROCARS"
-        ])
-    ]
 
-    # Iterative keyword matching
-    for parent, keywords in mappings:
-        if any(kw in n for kw in keywords):
+    # Parent-to-keywords mapping
+    mappings = {
+        "Hela Clothing": ["HELA", "INDIGLOW", "CLOTHIG"],
+        "Central Finance": ["CENTRAL FINANCE", "CF ", "CF-", "CF"],
+        "Commercial Bank": ["COMMERCIAL BANK", "COMBANK", "CBC "],
+        "Sampath Bank": ["SAMPATH"],
+        "Hatton National Bank": ["HATTON NATIONAL", "HNB"],
+        "Seylan Bank": ["SEYLAN"],
+        "Nations Trust Bank": ["NATIONS TRUST", " NTB"],
+        "Pan Asia Bank": ["PAN ASIA"],
+        "DFCC Bank": ["DFCC"],
+        "John Keells Group": ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"],
+        "Hayleys Group": ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"],
+        "LOLC / Browns Group": ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"],
+        "Vallibel One": ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"],
+        "Cargills Group": ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"],
+        "Gamma Pizzakraft": ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"],
+        "Abans Group": ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"],
+        "Softlogic": ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"],
+        "Hemas Holdings": ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"],
+        "MAS Holdings": ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"],
+        "Brandix": ["BRANDIX", "FORTUDE"],
+        "SITS Internal": ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"],
+        "IWS": ["SWEDISH CARS", "PURE CEYLON BEVARAGE", "IWS LOGISTICS", 
+                "WINDCASTLE", "ART TV", "GERMANIA", "IWS HOLDINGS", 
+                "IWS INVESTEMENTS", "IWS AUTOMOBILES", "DYNACOM ELECTRONICS", "EUROCARS"]
+    }
+
+    # Convert all keywords to uppercase once
+    for parent, keywords in mappings.items():
+        keywords_upper = [kw.upper() for kw in keywords]
+        if any(kw in n for kw in keywords_upper):
             return parent
-            
-    # Return original name if no keyword matches
+
     return str(name).strip()
 
-# --- TECHNICIAN TEAM MAPPING ---
 def get_team_from_technician(name):
-    # Standardize input for better matching
-    name = str(name).strip()
-    
-    sits_support = [
-        "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
-        "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
-        "Nirantha Madhushanka", "Kavinda Nethmal", "Heshan Lakshitha", "Sanath Manjula",
-        "Nadeesh Madhushan", "H.D.P Pradeep", "Dilan Madhawa", "SITS IT Support",
-        "Sayanthan Rasalinkam", "Malmi Nandasiri", "Uthayananthan Thanushanth",
-        "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
-        "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
-        "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
-        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna", 
-        "Rusith Tharanga Silva", "Duminda Dayasiri"
-    ]
-    gamma_it = [
-        "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
-        "Preshan Silva", "Kavindu Basilu", "Nimna Mendis", "Janindu Hewaalankarage",
-        "Hasitha Munasinghe", "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan",
-        "Hashan Madushanka"
-    ]
-    service_desk = [
-        "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
-        "Sasanka Madusith", "Ositha Buddika"
-    ]
-    
-    # ADDED: Software Dept Members
-    software_dept = [
-        "Software Support", "Dev Team", "Application Support" 
-        # Add specific software personnel names here
-    ]
-    
-# ADDED: Enterprise Team Members
-    enterprise_team = [
-        "Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"
-    ]
+    """
+    Maps a technician's full name to their corresponding team.
+    Returns 'Unassigned' if the technician is not in any predefined team.
+    """
+    if pd.isna(name) or not str(name).strip():
+        return "Unassigned"
 
-    # Mapping Logic: Matches names to specific Operational Units
-    if name in sits_support: return "SITS IT Support"
-    if name in gamma_it: return "Gamma IT"
-    if name in service_desk: return "Service Desk"
-    if name in software_dept: return "Software Dept"
-    if name in enterprise_team: return "Enterprise Team"
-    
-    # Returning Unassigned allows you to see names that aren't mapped yet
+    name = str(name).strip()
+
+    # Dictionary mapping team name -> list of technicians
+    teams = {
+        "SITS IT Support": [
+            "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
+            "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
+            "Nirantha Madhushanka", "Kavinda Nethmal", "Heshan Lakshitha", "Sanath Manjula",
+            "Nadeesh Madhushan", "H.D.P Pradeep", "Dilan Madhawa", "SITS IT Support",
+            "Sayanthan Rasalinkam", "Malmi Nandasiri", "Uthayananthan Thanushanth",
+            "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
+            "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
+            "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
+            "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna",
+            "Rusith Tharanga Silva", "Duminda Dayasiri"
+        ],
+        "Gamma IT": [
+            "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
+            "Preshan Silva", "Kavindu Basilu", "Nimna Mendis", "Janindu Hewaalankarage",
+            "Hasitha Munasinghe", "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan",
+            "Hashan Madushanka"
+        ],
+        "Service Desk": [
+            "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
+            "Sasanka Madusith", "Ositha Buddika"
+        ],
+        "Software Dept": [
+            "Software Support", "Dev Team", "Application Support"
+            # Add more names if needed
+        ],
+        "Enterprise Team": [
+            "Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"
+        ]
+    }
+
+    # Iterate over dictionary to find team
+    for team_name, members in teams.items():
+        if name in members:
+            return team_name
+
     return "Unassigned"
 
+# --- 5. DATA PROCESSING ---
 def process_data_safely(df):
-    if df is None or df.empty: return pd.DataFrame()
+    """
+    Cleans and enriches the analytics dataframe:
+    - Fixes SLA fields
+    - Maps technicians to teams
+    - Maps companies to parent companies
+    - Handles dates and status
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
     df = df.copy()
-    
+
     # 1. Clean column headers
     df.columns = [str(c).strip() for c in df.columns]
-    
-    # 2. Dynamic Column Identification
-    tto_col = next((c for c in ['SLA tto passed', 'TTO passed', 'SLA tto p'] if c in df.columns), None)
-    ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed', 'SLA ttr p'] if c in df.columns), None)
-    a_col = next((c for c in ['Agent->Full name', 'Agent', 'Agent Name'] if c in df.columns), None)
-    c_col = next((c for c in ['Organization->Name', 'Organization', 'Organization Name'] if c in df.columns), None)
-    
-    # 3. SLA Standardization (Checks for 'no', 'met', or 'within sla')
-    def check_sla(val):
-        v = str(val).strip().lower()
-        return 1 if v in ['no', 'met', 'within sla', 'achieved', 'yes'] else 0
 
-    df['TTO_Done'] = df[tto_col].apply(check_sla) if tto_col else 0
-    df['TTR_Done'] = df[ttr_col].apply(check_sla) if ttr_col else 0
-    
+    # 2. Identify key columns dynamically
+    col_map = {
+        "tto": next((c for c in df.columns if any(k in c.lower() for k in ['tto passed', 'tto p'])), None),
+        "ttr": next((c for c in df.columns if any(k in c.lower() for k in ['ttr passed', 'ttr p'])), None),
+        "agent": next((c for c in df.columns if any(k in c.lower() for k in ['agent', 'full name'])), None),
+        "company": next((c for c in df.columns if any(k in c.lower() for k in ['organization', 'parent_company'])), None),
+        "start_date": next((c for c in df.columns if 'start date' in c.lower()), None),
+    }
+
+    # 3. SLA Standardization
+    def check_sla(val):
+        return int(str(val).strip().lower() in ['yes', 'met', 'within sla', 'achieved', 'passed'])
+
+    df['TTO_Done'] = df[col_map['tto']].apply(check_sla) if col_map['tto'] else 0
+    df['TTR_Done'] = df[col_map['ttr']].apply(check_sla) if col_map['ttr'] else 0
+
     # 4. Date & Status Handling
-    if 'Start date' in df.columns:
-        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-        
+    if col_map['start_date']:
+        df['Start date'] = pd.to_datetime(df[col_map['start_date']], errors='coerce')
+
     if 'Status' in df.columns:
         df['Status_Clean'] = df['Status'].astype(str).str.strip().str.lower()
         df['Is_Pending'] = (df['Status_Clean'] == 'pending').astype(int)
         df['Is_Closed'] = (df['Status_Clean'] == 'closed').astype(int)
-    
-    # 5. Mapped Team Logic (The Fix for Operational Units)
-    if a_col:
-        # Assign the team based on the technician name
-        df['Mapped_Team'] = df[a_col].apply(get_team_from_technician)
-    else:
-        df['Mapped_Team'] = "Unassigned"
-        
+
+    # 5. Technician Team Mapping
+    df['Mapped_Team'] = df[col_map['agent']].apply(get_team_from_technician) if col_map['agent'] else 'Unassigned'
+
     # 6. Company Mapping
-    if c_col:
-        df['Parent_Company'] = df[c_col].apply(get_parent_company)
-    else:
-        df['Parent_Company'] = "Internal"
-    
-    # 7. Final Cleanup: Ensure no NaN values in filtering columns
+    df['Parent_Company'] = df[col_map['company']].apply(get_parent_company) if col_map['company'] else 'Internal'
+
+    # 7. Final Cleanup
     df['Mapped_Team'] = df['Mapped_Team'].fillna('Unassigned')
     df['Parent_Company'] = df['Parent_Company'].fillna('Internal')
-    
-    if 'Ref' not in df.columns: 
-        df['Ref'] = range(len(df))
-        
+
+    if 'Ref' not in df.columns:
+        df['Ref'] = range(1, len(df) + 1)
+
     return df
 
-# --- 1. INITIALIZATION ---
+
+# --- 6. STREAMLIT SESSION INITIALIZATION ---
 def initialize_session():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "user_role" not in st.session_state:
-        st.session_state.user_role = None
-    if "username" not in st.session_state:
-        st.session_state.username = None
-    if "data" not in st.session_state:
-        st.session_state.data = pd.DataFrame()
+    """Ensures essential session state variables exist"""
+    session_defaults = {
+        "authenticated": False,
+        "user_role": None,
+        "username": None,
+        "data": pd.DataFrame(),
+        "last_updated": None
+    }
+
+    for key, default in session_defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
 
 initialize_session()
 
@@ -478,14 +495,6 @@ def logout():
     st.session_state.username = None
     st.session_state.data = pd.DataFrame()
     st.rerun()
-
-import streamlit as st
-import pandas as pd
-import os
-import base64
-from io import BytesIO
-import requests
-from sqlalchemy import text
 
 # --- 2. LOGIN UI ---
 if not st.session_state.authenticated:
@@ -612,7 +621,6 @@ if st.session_state.data.empty:
 
 # --- 5. DASHBOARD CODE STARTS BELOW ---
 
-# Using a small, styled header instead of st.title
 st.markdown(f"""
     <div style='padding: 10px; border-radius: 5px; background-color: #f0f2f6; margin-bottom: 20px;'>
         <p style='margin: 0; font-size: 0.9rem; color: #666; font-weight: bold;'>
@@ -621,186 +629,156 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Your analytics charts and tables go here...
-
-# --- DATA PREP ---
-df_base = st.session_state.data.copy()
-org_col = next((c for c in ['Organization->Name', 'Organization'] if c in df_base.columns), "Organization")
-a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df_base.columns), "Agent")
-pr_col = next((c for c in ['Pending reason', 'Reason', 'Pending Reason'] if c in df_base.columns), None)
-t_col = 'Mapped_Team'
-
-# --- SIDEBAR ---
+# --- FIXED SIDEBAR ---
 with st.sidebar:
-    if os.path.exists(LOGO_PATH): 
+    # Logo
+    if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=180)
-        
+    
     st.markdown("### DATA MANAGEMENT")
     new_data = st.file_uploader("Update SQL Database", type=['xlsx', 'csv'])
     if new_data:
         df_new = pd.read_csv(new_data, encoding='latin1') if new_data.name.endswith('.csv') else pd.read_excel(new_data)
-        processed_new = process_data_safely(df_new) 
-        save_to_db(processed_new)
+        processed_new = process_data_safely(df_new)
+        save_to_db(processed_new)  # make sure this function exists
         st.session_state.data = processed_new
-        st.rerun()
+        st.experimental_rerun()
     
     st.markdown("---")
     st.markdown("### FILTERS")
-
-    # 1. Date Filter Logic - Restoring the From/To Selectors
-    # Dynamically find date column to prevent KeyErrors
+    
+    # --- DATA COPY ---
+    df_base = st.session_state.data.copy()
+    
+    # --- DATE FILTER ---
     d_col = next((c for c in df_base.columns if 'start' in c.lower() or 'fixed' in c.lower()), None)
-    selected_dates = []
-
-    if d_col:
+    if d_col and not df_base.empty:
         valid_dates = pd.to_datetime(df_base[d_col], errors='coerce').dropna()
         if not valid_dates.empty:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
-            
-            # SIDE-BY-SIDE DATE PICKERS
             col_f, col_t = st.columns(2)
             with col_f:
                 date_from = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date, key="sidebar_from")
             with col_t:
                 date_to = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date, key="sidebar_to")
-            
             selected_dates = [date_from, date_to]
-
-    # 2. Operational Unit (Hard-cleaning "Unassigned" out of the UI)
+        else:
+            selected_dates = []
+    else:
+        selected_dates = []
+    
+    # --- OPERATIONAL UNIT FILTER ---
     if 'Mapped_Team' in df_base.columns:
-        # Get unique teams and remove any variants of Unassigned/NaN
-        raw_teams = df_base['Mapped_Team'].unique().tolist()
-        available_teams = [
-            t for t in raw_teams 
-            if str(t).strip().lower() not in ['unassigned', 'nan', 'none', '']
-        ]
+        raw_teams = df_base['Mapped_Team'].dropna().unique().tolist()
+        available_teams = [t for t in raw_teams if str(t).strip().lower() not in ['unassigned', 'nan', 'none', '']]
         unit_options = ["All Departments"] + sorted(available_teams)
     else:
-        unit_options = ["All Departments", "Software Dept", "Enterprise Team", "Service Desk"]
-    
+        unit_options = ["All Departments"]
     selected_unit = st.selectbox("Operational Unit", unit_options)
     
-    # 3. Customer Filter
-    all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
+    # --- CUSTOMER FILTER ---
+    if 'Parent_Company' in df_base.columns:
+        all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
+    else:
+        all_parents_list = []
     all_parents_options = ["All Customers"] + all_parents_list
     selected_org = st.selectbox("Select Customer", all_parents_options)
     
-    st.markdown("### EXCLUSIONS")
+    # --- EXCLUSIONS ---
     excluded_orgs = st.multiselect("Exclude Organizations", all_parents_list)
     
-    # 4. Agent Exclusions
-    all_agents = sorted(df_base[a_col].dropna().unique().tolist()) if a_col in df_base.columns else []
+    # --- AGENT EXCLUSIONS ---
+    agent_col = next((c for c in df_base.columns if 'agent' in c.lower() or 'full name' in c.lower()), None)
+    all_agents = sorted(df_base[agent_col].dropna().unique().tolist()) if agent_col else []
     excluded_agents = st.multiselect("Exclude Agents", all_agents)
     
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("LOGOUT SESSION", use_container_width=True):
         st.session_state.data = pd.DataFrame()
-        st.rerun()
+        st.experimental_rerun()
 
 # --- 5. DASHBOARD FILTERING LOGIC ---
-
-# 1. INITIALIZE VARIABLES (Crucial to prevent NameErrors)
-df = pd.DataFrame()
+df = st.session_state.data.copy() if not st.session_state.data.empty else pd.DataFrame()
 df_pending = pd.DataFrame()
 df_aged = pd.DataFrame()
 backlog_val = 0
 aged_count = 0
 
-# Ensure selected_dates exists even if the sidebar logic was skipped
-if 'selected_dates' not in locals():
-    selected_dates = None
+# Ensure selected_dates exists
+selected_dates = selected_dates if 'selected_dates' in locals() else None
 
-if not st.session_state.data.empty:
-    df = st.session_state.data.copy()
-
-    # 2. DATE RANGE FILTER
-    # Only filter if selected_dates was successfully created in the sidebar
-    if selected_dates and len(selected_dates) == 2:
+if not df.empty:
+    # --- DATE FILTER ---
+    date_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
+    if date_col and selected_dates and len(selected_dates) == 2:
         try:
-            # Ensure 'Start date' is datetime objects
-            df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-            
-            # Filter using .date() to match the date_input format
-            df = df[(df['Start date'].dt.date >= selected_dates[0]) & 
-                    (df['Start date'].dt.date <= selected_dates[1])]
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            start_val, end_val = selected_dates
+            mask = (df[date_col].dt.date >= start_val) & (df[date_col].dt.date <= end_val)
+            df = df.loc[mask].copy()
         except Exception as e:
             st.error(f"Date Filter Error: {e}")
 
-    # 3. CUSTOMER FILTER
-    if 'selected_org' in locals() and selected_org != "All Customers":
+    # --- CUSTOMER FILTER ---
+    if 'selected_org' in locals() and selected_org != "All Customers" and 'Parent_Company' in df.columns:
         df = df[df['Parent_Company'] == selected_org]
 
-    # 4. UNIT FILTER
-    if 'selected_unit' in locals() and selected_unit != "All Departments": 
-        team_col = 'Mapped_Team'
-        if team_col in df.columns:
-            df = df[df[team_col] == selected_unit]
+    # --- UNIT FILTER ---
+    if 'selected_unit' in locals() and selected_unit != "All Departments" and 'Mapped_Team' in df.columns:
+        df = df[df['Mapped_Team'] == selected_unit]
 
-    # 5. EXCLUSIONS
-    if 'excluded_orgs' in locals() and excluded_orgs:
+    # --- EXCLUSIONS ---
+    if 'excluded_orgs' in locals() and excluded_orgs and 'Parent_Company' in df.columns:
         df = df[~df['Parent_Company'].isin(excluded_orgs)]
 
     if 'excluded_agents' in locals() and excluded_agents and a_col in df.columns:
         df = df[~df[a_col].isin(excluded_agents)]
 
-    # 6. STATUS & AGED LOGIC
-    # Using a fixed reference for "now" to keep calculations consistent
+    # --- STATUS & AGED LOGIC ---
     now = datetime.now()
     one_month_ago = now - timedelta(days=30)
 
-    if 'Status' in df.columns:
-        # Clean status for reliable filtering
-        status_clean = df['Status'].astype(str).str.strip().str.lower()
-        df_pending = df[status_clean == 'pending'].copy()
-        
-        # --- 6. STATUS & AGED LOGIC ---
-now = datetime.now()
-one_month_ago = now - timedelta(days=30)
+    if 'Status' in df.columns and date_col:
+        df['Status_Clean'] = df['Status'].astype(str).str.strip().str.lower()
+        df_pending = df[df['Status_Clean'] == 'pending'].copy()
 
-# 1. Dynamically find the Start Date column to avoid KeyError
-# We look for common variations of the name
-date_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
+        if not df_pending.empty:
+            df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce')
+            
+            # Handle timezone-naive conversion safely
+            if df_pending[date_col].dt.tz is not None:
+                temp_dates = df_pending[date_col].dt.tz_localize(None)
+            else:
+                temp_dates = df_pending[date_col]
 
-if 'Status' in df.columns and date_col:
-    # Normalize status for filtering
-    status_clean = df['Status'].astype(str).str.strip().str.lower()
-    df_pending = df[status_clean == 'pending'].copy()
-    
-    df_aged = pd.DataFrame()
+            df_aged = df_pending[temp_dates < one_month_ago].copy()
+        else:
+            df_aged = pd.DataFrame()
 
-    if not df_pending.empty:
-        # Use the dynamically found date_col instead of hardcoded 'Start date'
-        df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce')
-        
-        # Ensure comparison is possible by removing timezones (tz-naive)
-        temp_dates = df_pending[date_col].dt.tz_localize(None)
-        df_aged = df_pending[temp_dates < one_month_ago]
+        backlog_val = len(df_pending)
+        aged_count = len(df_aged)
+    else:
+        backlog_val = 0
+        aged_count = 0
+        if not date_col:
+            st.warning("Could not find a 'Start Date' column in the data.")
 
-    backlog_val = len(df_pending)
-    aged_count = len(df_aged)
-else:
-    # Fallback if columns are missing
-    backlog_val = 0
-    aged_count = 0
-    if not date_col:
-        st.warning("Could not find a 'Start Date' column in the data.")
-
-# --- SLA CALCULATIONS ---
+# --- SLA CALCULATIONS (Flipped Logic) ---
 total_v = len(df)
 
-# Use the columns created by master_data_sync.py to show real-time breaches
-tto_met_count = int(df['TTO MET'].sum()) if 'TTO MET' in df.columns else 0
-ttr_met_count = int(df['TTR MET'].sum()) if 'TTR MET' in df.columns else 0
+# Flip the counts
+tto_breach_count = int(df['TTO_Done'].sum()) if 'TTO_Done' in df.columns else 0
+ttr_breach_count = int(df['TTR_Done'].sum()) if 'TTR_Done' in df.columns else 0
 
-# Breaches are the remaining tickets from the total volume
-tto_breach_count = total_v - tto_met_count
-ttr_breach_count = total_v - ttr_met_count
+# Met count is now the remaining tickets
+tto_met_count = total_v - tto_breach_count
+ttr_met_count = total_v - ttr_breach_count
 
-# Calculate real-time percentages
-tto_perf_pct = (tto_met_count / total_v * 100) if total_v > 0 else 0
-ttr_perf_pct = (ttr_met_count / total_v * 100) if total_v > 0 else 0
-tto_breach_pct = 100 - tto_perf_pct if total_v > 0 else 0
-ttr_breach_pct = 100 - ttr_perf_pct if total_v > 0 else 0
+# Calculate percentages
+tto_breach_pct = (tto_breach_count / total_v * 100) if total_v > 0 else 0
+ttr_breach_pct = (ttr_breach_count / total_v * 100) if total_v > 0 else 0
+tto_perf_pct = 100 - tto_breach_pct if total_v > 0 else 0
+ttr_perf_pct = 100 - ttr_breach_pct if total_v > 0 else 0
 
 # --- MAIN INTERFACE ---
 if aged_count > 0:
@@ -888,22 +866,47 @@ with tab1:
         with c_table:
             st.dataframe(top_cust, use_container_width=True, hide_index=True, height=400)
 
-    # 5. Monthly SLA Analysis Chart & Performance Table
-    st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
-    if sd_col:
-        df['Month'] = pd.to_datetime(df[sd_col], errors='coerce').dt.strftime('%Y-%m')
-        monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum'}).reset_index()
-        monthly['TTO %'] = (monthly['TTO_Done'] / monthly['Ref'] * 100).round(1)
-        monthly['TTR %'] = (monthly['TTR_Done'] / monthly['Ref'] * 100).round(1)
-        
-        cl, cr = st.columns([2, 1])
-        with cl:
-            fig_sla = px.bar(monthly, x='Month', y=['TTO %', 'TTR %'], barmode='group', color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'})
-            fig_sla.update_layout(height=350, margin=dict(l=0, r=0, t=20, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
-            st.plotly_chart(fig_sla, use_container_width=True)
-        with cr:
-            st.markdown("#### Monthly Performance Summary")
-            st.dataframe(monthly[['Month', 'Ref', 'TTO %', 'TTR %']], use_container_width=True, hide_index=True, height=350)
+# --- 5. Monthly SLA Analysis Chart & Performance Table ---
+st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
+
+if sd_col:
+    # Convert start date to month
+    df['Month'] = pd.to_datetime(df[sd_col], errors='coerce').dt.strftime('%Y-%m')
+    
+    # Aggregate by month
+    monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum'}).reset_index()
+    
+    # Flip logic: TTO/TTR "Done" now represent breaches, so % breaches
+    monthly['TTO %'] = (monthly['TTO_Done'] / monthly['Ref'] * 100).round(1)   # % Breaches
+    monthly['TTR %'] = (monthly['TTR_Done'] / monthly['Ref'] * 100).round(1)   # % Breaches
+    monthly['TTO Met %'] = 100 - monthly['TTO %']  # Optional: Met SLA %
+    monthly['TTR Met %'] = 100 - monthly['TTR %']  # Optional: Met SLA %
+    
+    cl, cr = st.columns([2, 1])
+    with cl:
+        # Plot breaches as main bars
+        fig_sla = px.bar(
+            monthly, x='Month', y=['TTO %', 'TTR %'],
+            barmode='group',
+            color_discrete_map={'TTO %': '#FF3300', 'TTR %': '#1F3B4D'}  # Red for breaches, dark blue for TTR
+        )
+        fig_sla.update_layout(
+            height=350,
+            margin=dict(l=0, r=0, t=20, b=0),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            legend=dict(orientation="h", y=1.1, x=1)
+        )
+        st.plotly_chart(fig_sla, use_container_width=True)
+    
+    with cr:
+        st.markdown("#### Monthly Performance Summary")
+        st.dataframe(
+            monthly[['Month', 'Ref', 'TTO %', 'TTR %', 'TTO Met %', 'TTR Met %']],
+            use_container_width=True,
+            hide_index=True,
+            height=350
+        )
 
 # --- 4. DASHBOARD CONTENT WRAPPER ---
 def render_dashboard_content(df):
