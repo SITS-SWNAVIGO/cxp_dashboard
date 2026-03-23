@@ -267,15 +267,15 @@ def apply_styles():
         /* 4. KPI METRIC CARDS */
         .kpi-wrapper {
             background: var(--bg-card);
-            padding: 4px 3px !important;
+            padding: 2px 3px !important;
             border-radius: 6px; 
             border: 1px solid var(--border-color); 
             text-align: center;
-            height: 36px !important;
+            height: 24px !important;
             display: flex;
             flex-direction: column;
             justify-content: center;
-            margin-bottom: 15px !important; 
+            margin-bottom: 8px !important; 
             box-shadow: 0 2px 4px rgba(0,0,0,0.05);
             /* Visual indicator for colorful theme */
             border-left: 3px solid #FF6600 !important;
@@ -501,46 +501,113 @@ def logout():
     st.session_state.data = pd.DataFrame()
     st.rerun()
 
-# --- 2. LOGIN UI ---
-if not st.session_state.authenticated:
-    st.markdown("<style>[data-testid='stSidebar'] {display: none !important;}</style>", unsafe_allow_html=True)
-    _, center_col, _ = st.columns([1, 1.5, 1])
+import streamlit as st
+import base64
+import os
+
+# --- 1. CONFIG & STYLING ---
+def UI_login_styles():
+    st.markdown("""
+        <style>
+            /* Hide Sidebar and Header during login */
+            [data-testid="stSidebar"], [data-testid="stHeader"] {display: none !important;}
+            
+            /* Main Background Gradient */
+            .stApp {
+                background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            }
+
+            /* Glassmorphism Login Card */
+            .login-container {
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(10px);
+                padding: 40px;
+                border-radius: 24px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                text-align: center;
+                margin-top: 5vh;
+            }
+
+            .brand-text {
+                font-family: 'Inter', sans-serif;
+                font-weight: 800;
+                letter-spacing: -1px;
+                margin-bottom: 5px;
+            }
+
+            /* Custom Button Styling */
+            div.stButton > button {
+                background: linear-gradient(90deg, #FF6600 0%, #FF8533 100%);
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 12px;
+                font-weight: 600;
+                transition: all 0.3s ease;
+            }
+            
+            div.stButton > button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 10px 15px -3px rgba(255, 102, 0, 0.4);
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. LOGIN UI LOGIC ---
+if not st.session_state.get('authenticated', False):
+    UI_login_styles()
+    
+    _, center_col, _ = st.columns([1, 1.2, 1])
     
     with center_col:
+        # Logo Loading Logic
         logo_html = ""
         if 'LOGO_PATH' in globals() and os.path.exists(LOGO_PATH):
             with open(LOGO_PATH, "rb") as f:
                 bin_str = base64.b64encode(f.read()).decode()
-            logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:120px; margin-bottom:20px;">'
+            logo_html = f'<img src="data:image/png;base64,{bin_str}" style="width:80px; margin-bottom:20px;">'
 
+        # Card Header
         st.markdown(f'''
-            <div style="text-align:center; margin-top:10vh; background:white; padding:30px; border-radius:15px; border-top:5px solid #FF6600; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+            <div class="login-container">
                 {logo_html}
-                <h2 style="color:#FF6600; margin:0; font-family:sans-serif;">CXP ANALYTICS</h2>
-                <p style="font-size:0.7rem; color:#666; font-weight:600; text-transform:uppercase; letter-spacing:1px;">Secure Access Portal</p>
+                <h1 class="brand-text" style="color:white; font-size: 2.2rem;">
+                    CXP <span style="color:#FF6600;">ANALYTICS</span>
+                </h1>
+                <p style="color:#94a3b8; font-size:0.85rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:30px;">
+                    Performance Management Portal
+                </p>
             </div>
         ''', unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        input_user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
-        input_pass = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
-        
-        if st.button("LOGIN", use_container_width=True):
-            role = get_db_user(input_user, input_pass)
-            if role:
-                st.session_state.authenticated = True
-                st.session_state.user_role = role.lower()
-                st.session_state.username = input_user
-                
-                # Global Auto-Load: Load existing data if it exists in the database
-                db_df = load_from_db()
-                if not db_df.empty:
-                    st.session_state.data = process_data_safely(db_df)
-                st.rerun()
-            else:
-                st.error("Invalid Username or Password")
-    st.stop()
 
+        # Functional Input Area
+        with st.container():
+            st.markdown("<div style='margin-top: -20px;'>", unsafe_allow_html=True)
+            user = st.text_input("Username", placeholder="Username", label_visibility="collapsed")
+            pw = st.text_input("Password", type="password", placeholder="Password", label_visibility="collapsed")
+            
+            if st.button("SIGN IN TO PORTAL", use_container_width=True):
+                # Replace get_db_user with your actual auth function
+                role = get_db_user(user, pw) 
+                if role:
+                    st.session_state.authenticated = True
+                    st.session_state.user_role = role.lower()
+                    st.session_state.username = user
+                    
+                    # Auto-Load existing session data from SQLite
+                    db_df = load_from_db()
+                    if not db_df.empty:
+                        st.session_state.data = process_data_safely(db_df)
+                    
+                    st.rerun() # Fixed attribute error
+                else:
+                    st.error("Authentication Failed: Check credentials")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<p style='text-align:center; color:#475569; font-size:11px; margin-top:30px;'>Internal Use Only • BI Performance Pro v2.1</p>", unsafe_allow_html=True)
+    
+    st.stop()
     # --- 3. SUPER ADMIN CONTROL PANEL ---
 if st.session_state.user_role == "super_admin":
     with st.expander("👤 SUPER ADMIN: CONTROL PANEL", expanded=st.session_state.data.empty):
@@ -862,8 +929,8 @@ with tab1:
                 margin-bottom: 5px;
                 box-shadow: 0px 2px 4px rgba(0,0,0,0.1);
             ">
-                <p style="margin: 0; font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.9); text-transform: uppercase; letter-spacing: 0.5px;">{label}</p>
-                <h2 style="margin: 0; font-size: 22px; color: white; font-weight: 800; line-height: 1.1;">{value}</h2>
+                <p style="margin: 0; font-size: 8px; font-weight: 700; color: rgba(255,255,255,0.9); text-transform: uppercase; letter-spacing: 0.5px;">{label}</p>
+                <h2 style="margin: 0; font-size: 12px; color: white; font-weight: 800; line-height: 1.1;">{value}</h2>
             </div>
         """, unsafe_allow_html=True)
 
@@ -977,113 +1044,75 @@ with tab1:
 # --- TAB 2: PERSONNEL PERFORMANCE ---
 with tab2:
     if not df.empty and 'Agent' in df.columns:
-        # 1. FIX THE 0% LOGIC: Create numeric Success/Breach columns
-        # Mapping 'no' to 1 (Success) and everything else to 0 (Breach)
-        df['TTO MET NUM'] = df['SLA tto passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
-        df['TTR MET NUM'] = df['SLA ttr passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
+        # 1. CHAINED DATA PROCESSING
+        agent_stats = (df.assign(
+            TTO_Met=df['SLA tto passed'].astype(str).str.lower().map({'no': 1}).fillna(0),
+            TTR_Met=df['SLA ttr passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
+        ).groupby('Agent').agg(
+            Total=('Ref', 'count'),
+            TTO_Sum=('TTO_Met', 'sum'),
+            TTR_Sum=('TTR_Met', 'sum')
+        ).assign(
+            TTO_Pct=lambda x: (x['TTO_Sum'] / x['Total'] * 100).round(1),
+            TTR_Pct=lambda x: (x['TTR_Sum'] / x['Total'] * 100).round(1),
+            Overall=lambda x: ((x['TTO_Pct'] + x['TTR_Pct']) / 2).round(1)
+        ).reset_index().sort_values('Total', ascending=False))
 
-        # 2. AGGREGATE DATA BY AGENT
-        agent_stats = df.groupby('Agent').agg(
-            Total_Tickets=('Ref', 'count'),
-            TTO_Met_Sum=('TTO MET NUM', 'sum'),
-            TTR_Met_Sum=('TTR MET NUM', 'sum')
-        ).reset_index()
-
-        # 3. CALCULATE PERCENTAGES
-        agent_stats['TTO %'] = (agent_stats['TTO_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
-        agent_stats['TTR %'] = (agent_stats['TTR_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
-        agent_stats['Overall %'] = ((agent_stats['TTO %'] + agent_stats['TTR %']) / 2).round(1)
+        # 2. TOP PERFORMER CARD & RADAR
+        st.markdown("### Personnel Insights")
+        top = agent_stats.sort_values('Overall', ascending=False).iloc[0]
         
-        # Sort by most active agents
-        agent_stats = agent_stats.sort_values(by='Total_Tickets', ascending=False)
-
-        # 4. TOP PERFORMER HIGHLIGHT (Colorful Leaderboard)
-        st.markdown("### Personnel Performance Insights")
-        
-        top_agent_row = agent_stats.sort_values('Overall %', ascending=False).iloc[0]
-        
-        l_col, r_col = st.columns([1, 2])
-        
-        with l_col:
-            # Custom styled badge for top technician
+        l, r = st.columns([1, 2])
+        with l:
             st.markdown(f"""
-                <div style="background-color: rgba(0, 230, 118, 0.1); padding: 20px; border-radius: 10px; border-left: 5px solid #00E676;">
-                    <h5 style="margin:0; color: #00E676;">TOP PERFORMER</h5>
-                    <h2 style="margin:0;">{top_agent_row['Agent']}</h2>
-                    <p style="margin:0; font-size: 14px; color: gray;">{top_agent_row['Overall %']}% Combined Score</p>
+                <div style="background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%); 
+                            padding: 12px; border-radius: 8px; border-left: 5px solid #00e676; color: white;">
+                    <p style="margin:0; font-size: 10px; opacity: 0.8;">TOP PERFORMER</p>
+                    <h3 style="margin:0; font-size: 20px;">{top['Agent']}</h3>
+                    <p style="margin:0; font-size: 16px; font-weight: 800;">{top['Overall']}% Score</p>
                 </div>
             """, unsafe_allow_html=True)
             
-            # Radar chart for visual flair
-            categories = ['TTO %', 'TTR %', 'Overall %']
-            fig_radar = go.Figure()
-            fig_radar.add_trace(go.Scatterpolar(
-                r=[top_agent_row['TTO %'], top_agent_row['TTR %'], top_agent_row['Overall %']],
-                theta=categories,
-                fill='toself',
-                line_color='#00B0FF'
+            fig_r = go.Figure(go.Scatterpolar(
+                r=[top['TTO_Pct'], top['TTR_Pct'], top['Overall']],
+                theta=['TTO', 'TTR', 'Score'], fill='toself', line_color='#00d4ff'
             ))
-            fig_radar.update_layout(
-                polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-                showlegend=False, height=250, margin=dict(t=30, b=20, l=30, r=30),
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig_radar, use_container_width=True)
+            fig_r.update_layout(polar=dict(radialaxis=dict(visible=False, range=[0, 100])), 
+                               height=180, margin=dict(t=20, b=20, l=40, r=40), paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_r, use_container_width=True)
 
-        with r_col:
-            # Modern bar chart
-            fig_agent = px.bar(
-                agent_stats, 
-                x='Agent', 
-                y=['TTO %', 'TTR %'],
-                barmode='group', 
-                title="SLA Achievement by Technician",
-                color_discrete_sequence=['#00B0FF', '#7B1FA2'],
-                labels={'value': 'Percentage (%)', 'variable': 'Metric'}
-            )
-            fig_agent.add_hline(y=83.7, line_dash="dot", line_color="#FF5252", annotation_text="Target 83.7%")
-            fig_agent.update_layout(
-                yaxis_range=[0, 110],
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            st.plotly_chart(fig_agent, use_container_width=True)
+        with r:
+            fig_b = px.bar(agent_stats, x='Agent', y=['TTO_Pct', 'TTR_Pct'], barmode='group',
+                           color_discrete_sequence=['#00d4ff', '#7b1fa2'], height=260)
+            fig_b.add_hline(y=83.7, line_dash="dot", line_color="#ff1744", annotation_text="Target")
+            fig_b.update_layout(margin=dict(t=10, b=0, l=0, r=0), paper_bgcolor='rgba(0,0,0,0)', 
+                                plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1))
+            st.plotly_chart(fig_b, use_container_width=True)
 
-        st.divider()
-
-        # 5. DETAILED TABLE WITH COLORFUL PROGRESS BARS
-        st.markdown("#### Detailed Personnel Metrics")
+        # 3. COMPACT TABLE
         st.dataframe(
-            agent_stats[['Agent', 'Total_Tickets', 'TTO %', 'TTR %', 'Overall %']],
-            use_container_width=True, 
-            hide_index=True,
+            agent_stats[['Agent', 'Total', 'TTO_Pct', 'TTR_Pct', 'Overall']],
+            use_container_width=True, hide_index=True,
             column_config={
-                "Agent": st.column_config.TextColumn("Technician"),
-                "Total_Tickets": st.column_config.NumberColumn("Tickets Handled"),
-                "TTO %": st.column_config.ProgressColumn(
-                    "TTO Health", 
-                    min_value=0, max_value=100, format="%.1f%%"
-                ),
-                "TTR %": st.column_config.ProgressColumn(
-                    "TTR Health", 
-                    min_value=0, max_value=100, format="%.1f%%"
-                ),
-                "Overall %": st.column_config.NumberColumn(
-                    "Efficiency Score",
-                    format="%.1f%%"
-                )
+                "Agent": "Technician", "Total": "Tickets",
+                "TTO_Pct": st.column_config.ProgressColumn("TTO %", format="%.1f%%", min_value=0, max_value=100),
+                "TTR_Pct": st.column_config.ProgressColumn("TTR %", format="%.1f%%", min_value=0, max_value=100),
+                "Overall": st.column_config.NumberColumn("Score", format="%.1f%%")
             }
         )
     else:
-        st.info("Agent data is not available for the current selection.")
-
+        st.info("No agent data available.")
 # --- TAB 3: GROUP HIERARCHY (RESTORED TABLE + COLORFUL CARDS) ---
 with tab3:
     # 1. DATA PREPARATION (Maintaining existing mapping logic)
     org_col_for_mapping = next((c for c in df.columns if 'organization' in c.lower() or 'customer' in c.lower()), None)
     if org_col_for_mapping:
         df['Parent_Company'] = df[org_col_for_mapping].apply(get_parent_company)
+        
+        # --- FIX: POPULATE MAPPING LOGIC BEFORE AGGREGATION ---
+        # Mapping 'no' (meaning NOT breached) to 1 for successful compliance
+        df['TTO_Done'] = df['SLA tto passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
+        df['TTR_Done'] = df['SLA ttr passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
 
     if 'Parent_Company' in df.columns:
         # 2. AGGREGATE SUMMARY
@@ -1124,7 +1153,6 @@ with tab3:
         # 4. RESTORED: TOP CUSTOMERS TABLE (With Colorful Progress Bars)
         st.write("#### Top Customers by Parent Group")
         
-        # Renaming for display as per your original request
         display_summary = parent_summary.copy()
         display_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
         
@@ -1289,7 +1317,6 @@ with tab5:
 
     # --- SUB-TAB 1: SEARCH SPECIFIC TICKET ---
     with sub_tab1:
-        st.markdown('<p style="color: #FF6600; font-weight: bold; font-size: 18px;">Search Audit Trail</p>', unsafe_allow_html=True)
         
         search_ref = st.text_input(
             "Enter Ticket Ref ID:", 
@@ -1347,8 +1374,6 @@ with tab5:
 
     # --- SUB-TAB 2: VIEW ENTIRE LOG ---
     with sub_tab2:
-        st.markdown('<p style="color: #1F3B4D; font-weight: bold; font-size: 18px;">Full Operational History</p>', unsafe_allow_html=True)
-        
         try:
             with engine.connect() as conn:
                 full_query = text("""
