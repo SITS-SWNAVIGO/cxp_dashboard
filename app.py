@@ -17,6 +17,26 @@ import base64
 from io import BytesIO
 import requests
 from sqlalchemy import text
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+import os
+from PIL import Image
+
+# --- STEP 1: PAGE CONFIGURATION ---
+# This changes the logo in the browser tab (Title Bar)
+st.set_page_config(
+    page_title="CXP Analytics Portal",
+    page_icon="logo.png", # Replace with your logo file name
+    layout="wide"
+)
+
+# --- 1. SET DEFAULT DATE RANGE ---
+today = datetime.now()
+three_months_ago = today - timedelta(days=90)
 
 # --- 1. CONFIGURATION (MySQL Connection) ---
 DB_HOST = "213.210.36.220"
@@ -129,7 +149,7 @@ LOGO_PATH = BASE_DIR / "assets" / "logo.png"
 if "data" not in st.session_state:
     st.session_state.data = pd.DataFrame()
 
-# --- THEME ADAPTIVE STYLING (ULTRA-COMPACT ONE-PAGE OPTIMIZED) ---
+# --- THEME ADAPTIVE STYLING (ULTRA-COMPACT & COLORFUL) ---
 def apply_styles():
     st.markdown("""
     <style>
@@ -142,37 +162,44 @@ def apply_styles():
             --border-color: #E2E8F0;
             --sidebar-bg: linear-gradient(180deg, #102A43 0%, #061727 100%);
             --sampath-orange: linear-gradient(135deg, #FF6600 0%, #FF8533 100%);
+            /* Static Background Colors */
+            --app-bg: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg-card: rgba(30, 30, 30, 0.6);
+                --bg-card: rgba(30, 30, 30, 0.85);
                 --text-main: #F8FAFC;
                 --text-sub: #94A3B8;
                 --border-color: rgba(255, 255, 255, 0.1);
+                --app-bg: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
             }
         }
 
-        /* 1. GLOBAL SPACE ELIMINATION */
+        /* 1. GLOBAL SPACE & STATIC BACKGROUND */
+        [data-testid="stAppViewContainer"] {
+            background: var(--app-bg) !important;
+            background-attachment: fixed !important;
+        }
+
         html, body, [data-testid="stAppViewContainer"] {
             font-family: 'Inter', sans-serif;
             font-size: 0.85rem !important;
         }
 
         .block-container { 
-            padding-top: 1rem !important; /* Minimal top space */
+            padding-top: 1rem !important; 
             padding-bottom: 0rem !important;
             max-width: 99% !important; 
         }
 
-        /* Tightens the gap between every Streamlit widget */
         [data-testid="stVerticalBlock"] {
             gap: 0.25rem !important;
         }
 
         /* 2. COMPACT HERO HEADER */
         .hero-title {
-            font-size: 1.6rem !important; /* Smaller but bold */
+            font-size: 1.6rem !important;
             font-weight: 800 !important;
             background: var(--sampath-orange);
             -webkit-background-clip: text;
@@ -193,58 +220,30 @@ def apply_styles():
             opacity: 0.8;
         }
                 
-        /* 1. TIGHTEN SIDEBAR TOP PADDING */
         [data-testid="stSidebarContent"] {
             padding-top: 0rem !important;
         }
 
-        /* 2. REMOVE SPACING AROUND THE LOGO */
         [data-testid="stSidebar"] [data-testid="stImage"] {
-            margin-top: -45px !important;    /* Pulls the logo up to the very top */
-            margin-bottom: -35px !important; /* Pulls the following content up toward the logo */
+            margin-top: -45px !important;
+            margin-bottom: -35px !important;
             text-align: center;
             display: flex;
             justify-content: center;
         }
 
-        /* 3. OPTIONAL: SCALE LOGO FOR BETTER FIT */
         [data-testid="stSidebar"] [data-testid="stImage"] img {
-            max-width: 80% !important; /* Slightly smaller logo fits better in compact view */
+            max-width: 80% !important;
         }
 
-        /* 1. REFINED CRITICAL ALERT WITH MICRO-MARGINS */
-        .critical-alert-box {
-            animation: critical-glow 2s infinite;
-            padding: 3px 12px !important; 
-            border-radius: 20px;
-            border: 1px solid rgba(211, 47, 47, 0.4);
-            color: #D32F2F; 
-            font-weight: 600;
-            text-align: center; 
-            /* Added 8px top/bottom margin to separate from Sync text and Tabs */
-            margin: 8px auto !important; 
-            max-width: fit-content;
-            font-size: 0.75rem;
-            line-height: 1;
-            display: block;
-        }
-
-        /* 2. DE-CLUTTERING THE TAB ROW */
-        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
-            gap: 8px !important; 
-            /* Ensures space between the Alert pill and the Buttons */
+        /* 3. COLORFUL COMPACT TABS */
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] { 
+            gap: 5px !important; 
             margin-top: 4px !important; 
             margin-bottom: 8px !important;
+            background-color: transparent !important;
         }
 
-        /* 3. SUBTLE SYNC TEXT SPACING */
-        /* Targets the 'Live Sync Active' text specifically */
-        .stMarkdown div p {
-            margin-bottom: 2px !important;
-        }
-
-        /* 4. BUTTON-SHAPED TABS (SHRUNK) */
-        div[data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 5px !important; }
         div[data-testid="stTabs"] button[data-baseweb="tab"] {
             background-color: var(--bg-card) !important;
             border: 1px solid var(--border-color) !important;
@@ -252,9 +251,20 @@ def apply_styles():
             padding: 4px 12px !important;
             font-size: 0.75rem !important;
             height: 30px !important;
+            color: var(--text-sub) !important;
+            transition: all 0.3s ease;
         }
 
-        /* 7. KPI METRIC CARDS (ROW SEPARATION FIX) */
+        /* Active Tab Highlight */
+        div[data-testid="stTabs"] button[aria-selected="true"] {
+            background: var(--sampath-orange) !important;
+            color: white !important;
+            border: none !important;
+            box-shadow: 0 4px 10px rgba(255, 102, 0, 0.3) !important;
+            transform: translateY(-1px);
+        }
+
+        /* 4. KPI METRIC CARDS */
         .kpi-wrapper {
             background: var(--bg-card);
             padding: 4px 3px !important;
@@ -265,20 +275,10 @@ def apply_styles():
             display: flex;
             flex-direction: column;
             justify-content: center;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-            /* This forces space BELOW each card so the next row can't touch it */
             margin-bottom: 15px !important; 
-        }
-
-        /* Targets the Streamlit column gap specifically */
-        [data-testid="column"] {
-            padding-bottom: 10px !important;
-        }
-
-        /* Extra separation for the horizontal row containers */
-        [data-testid="stHorizontalBlock"] {
-            margin-bottom: 8px !important;
-            padding-top: 2px !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            /* Visual indicator for colorful theme */
+            border-left: 3px solid #FF6600 !important;
         }
 
         .kpi-label { 
@@ -294,6 +294,37 @@ def apply_styles():
             font-weight: 800; 
             color: var(--text-main); 
             line-height: 0.5;
+        }
+
+        [data-testid="column"] {
+            padding-bottom: 10px !important;
+        }
+
+        [data-testid="stHorizontalBlock"] {
+            margin-bottom: 8px !important;
+            padding-top: 2px !important;
+        }
+
+        /* 5. CRITICAL ALERT */
+        .critical-alert-box {
+            animation: critical-glow 2s infinite;
+            padding: 3px 12px !important; 
+            border-radius: 20px;
+            border: 1px solid rgba(211, 47, 47, 0.4);
+            color: #D32F2F; 
+            font-weight: 600;
+            text-align: center; 
+            margin: 8px auto !important; 
+            max-width: fit-content;
+            font-size: 0.75rem;
+            line-height: 1;
+            display: block;
+        }
+
+        @keyframes critical-glow {
+            0% { box-shadow: 0 0 5px rgba(211, 47, 47, 0.2); }
+            50% { box-shadow: 0 0 15px rgba(211, 47, 47, 0.5); }
+            100% { box-shadow: 0 0 5px rgba(211, 47, 47, 0.2); }
         }
     </style>
     """, unsafe_allow_html=True)
@@ -611,26 +642,35 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### FILTERS")
+
+    # 1. Date Logic: Calculate the range
+    today = datetime.now().date()
+    three_months_ago = today - timedelta(days=90)
     
+    # 2. Date Input: Two separate boxes using columns
+    col_f, col_t = st.columns(2)
+    
+    with col_f:
+        date_from = st.date_input(
+            "From Date",
+            value=three_months_ago,
+            max_value=today,
+            key="sidebar_from"
+        )
+        
+    with col_t:
+        date_to = st.date_input(
+            "To Date",
+            value=today,
+            max_value=today,
+            key="sidebar_to"
+        )
+    
+    # 3. Handle the selection for downstream filtering
+    selected_dates = [date_from, date_to]
+
     # --- DATA COPY ---
     df_base = st.session_state.data.copy()
-    
-    # --- DATE FILTER ---
-    d_col = next((c for c in df_base.columns if 'start' in c.lower() or 'fixed' in c.lower()), None)
-    if d_col and not df_base.empty:
-        valid_dates = pd.to_datetime(df_base[d_col], errors='coerce').dropna()
-        if not valid_dates.empty:
-            min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
-            col_f, col_t = st.columns(2)
-            with col_f:
-                date_from = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date, key="sidebar_from")
-            with col_t:
-                date_to = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date, key="sidebar_to")
-            selected_dates = [date_from, date_to]
-        else:
-            selected_dates = []
-    else:
-        selected_dates = []
     
     # --- OPERATIONAL UNIT FILTER ---
     if 'Mapped_Team' in df_base.columns:
@@ -785,459 +825,560 @@ if not df.empty:
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Main Dashboard", "Personnel Performance", "Group Hierarchy", "Executive Report", "Audit History"])
 
 # --- TAB 1: MAIN DASHBOARD ---
-    with tab1:
-        import plotly.graph_objects as go
-        import pandas as pd
-        from datetime import datetime
+with tab1:
+    import plotly.graph_objects as go
 
-        # --- 1. PERFORMANCE GAUGES SECTION ---
-        st.markdown("### Operational Performance Health")
-        
-        # Calculate Overall Met/Breach
-        overall_met = tto_met_count + ttr_met_count
-        overall_breach = tto_breach_count + ttr_breach_count
-        total_sla_points = overall_met + overall_breach
-        overall_perf_rate = (overall_met / total_sla_points * 100) if total_sla_points > 0 else 0
+    # 1. CORE LOGIC (Success = 'no' mapping)
+    tto_met_count = int((df['SLA tto passed'].astype(str).str.lower() == 'no').sum())
+    tto_perf_pct = (tto_met_count / total_v * 100) if total_v > 0 else 0
+    tto_breach_count = total_v - tto_met_count
+    tto_breach_pct = 100 - tto_perf_pct
 
-        # Helper function for Gauge Charts
-        def create_gauge(title, value, color):
-            fig = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = value,
-                number = {'suffix': "%", 'font': {'size': 26, 'color': '#1F3B4D'}},
-                title = {'text': title, 'font': {'size': 18, 'color': '#1F3B4D'}},
-                gauge = {
-                    'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#1F3B4D"},
-                    'bar': {'color': color},
-                    'bgcolor': "white",
-                    'borderwidth': 1,
-                    'bordercolor': "#eeeeee",
-                    'steps': [
-                        {'range': [0, 75], 'color': '#fde8e8'},
-                        {'range': [75, 90], 'color': '#fef9e7'},
-                        {'range': [90, 100], 'color': '#e8f5e9'}
-                    ],
-                    'threshold': {
-                        'line': {'color': "black", 'width': 3},
-                        'thickness': 0.75,
-                        'value': 95 
-                    }
-                }
-            ))
-            fig.update_layout(height=220, margin=dict(t=40, b=0, l=30, r=30), paper_bgcolor='rgba(0,0,0,0)')
-            return fig
+    res_df = df[df['Status'] == 'Resolved']
+    total_resolved = len(res_df)
+    ttr_met_count = int((res_df['SLA ttr passed'].astype(str).str.lower() == 'no').sum())
+    ttr_perf_pct = (ttr_met_count / total_resolved * 100) if total_resolved > 0 else 0
+    ttr_breach_count = total_resolved - ttr_met_count
+    ttr_breach_pct = 100 - ttr_perf_pct
 
-        # Display 3 Gauges side-by-side
-        g1, g2, g3 = st.columns(3)
-        with g1:
-            st.plotly_chart(create_gauge("OVERALL PERFORMANCE", overall_perf_rate, "#1F3B4D"), use_container_width=True)
-        with g2:
-            st.plotly_chart(create_gauge("TTO PERFORMANCE", tto_perf_pct, "#2E7D32"), use_container_width=True)
-        with g3:
-            st.plotly_chart(create_gauge("TTR PERFORMANCE", ttr_perf_pct, "#FF6600"), use_container_width=True)
+    total_sla_points = total_v + total_resolved
+    overall_met_combined = tto_met_count + ttr_met_count
+    overall_perf_rate = (overall_met_combined / total_sla_points * 100) if total_sla_points > 0 else 0
 
-        # --- NEW: IMPROVED LAST 3 MONTHS PERFORMANCE TABLE (WITH TTO/TTR) ---
+    # Vibrant Corporate Colors
+    def get_status_color(val):
+        if val >= 95: return "#00C853" # Vibrant Green
+        if val >= 85: return "#FFAB00" # Vibrant Amber
+        return "#FF1744" # Vibrant Red
+
+    # --- UPDATED: COMPACT VIBRANT KPI CARD ---
+    def kpi_card(label, value, color="#1f2c38"):
+        st.markdown(f"""
+            <div style="
+                background-color: {color};
+                padding: 10px 12px;
+                border-radius: 6px;
+                text-align: left;
+                margin-bottom: 10px;
+                box-shadow: 0px 2px 4px rgba(0,0,0,0.1);
+            ">
+                <p style="margin: 0; font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.9); text-transform: uppercase; letter-spacing: 0.5px;">{label}</p>
+                <h2 style="margin: 0; font-size: 22px; color: white; font-weight: 800; line-height: 1.1;">{value}</h2>
+            </div>
+        """, unsafe_allow_html=True)
+
+    # --- 2. PERFORMANCE HEALTH ---
+    st.markdown("### Operational Performance Health")
+    
+    def create_thin_ring(title, value):
+        color = get_status_color(value)
+        fig = go.Figure(go.Pie(
+            values=[value, 100 - value],
+            hole=0.85,
+            marker=dict(colors=[color, "rgba(255, 255, 255, 0.05)"], line=dict(width=0)),
+            hoverinfo='none', textinfo='none', sort=False
+        ))
+        fig.update_layout(
+            annotations=[
+                {'text': f"<span style='font-size:24px; font-weight:800; color:{color};'>{value:.1f}%</span>",
+                 'x': 0.5, 'y': 0.5, 'showarrow': False},
+                {'text': "HEALTH", 'x': 0.5, 'y': 0.35, 'showarrow': False, 
+                 'font': {'size': 8, 'color': 'gray'}}
+            ],
+            title={'text': f"<b>{title}</b>", 'y': 0.95, 'x': 0.5, 'xanchor': 'center', 'font': {'size': 11, 'color': 'gray'}},
+            showlegend=False, height=180, margin=dict(t=30, b=0, l=10, r=10), paper_bgcolor='rgba(0,0,0,0)'
+        )
+        return fig
+
+    g1, g2, g3 = st.columns(3)
+    with g1: st.plotly_chart(create_thin_ring("OVERALL PERFORMANCE", overall_perf_rate), use_container_width=True)
+    with g2: st.plotly_chart(create_thin_ring("TTO SUCCESS", tto_perf_pct), use_container_width=True)
+    with g3: st.plotly_chart(create_thin_ring("TTR SUCCESS", ttr_perf_pct), use_container_width=True)
+
+    # --- 3. MONTHLY TRENDS ---
+    if sd_col in df.columns:
         st.markdown("#### Monthly Performance Breakdown")
-        if sd_col in df.columns:
-            df_m = df.copy()
-            df_m[sd_col] = pd.to_datetime(df_m[sd_col], errors='coerce')
-            df_m = df_m.dropna(subset=[sd_col])
-            df_m['Month'] = df_m[sd_col].dt.strftime('%b %Y')
-            df_m['Month_Sort'] = df_m[sd_col].dt.to_period('M')
+        df_m = df.copy()
+        df_m[sd_col] = pd.to_datetime(df_m[sd_col], errors='coerce')
+        df_m = df_m.dropna(subset=[sd_col])
+        df_m['Month'] = df_m[sd_col].dt.strftime('%b %Y')
+        df_m['Month_Sort'] = df_m[sd_col].dt.to_period('M')
 
-            # Detailed Monthly Aggregation
-            def calc_monthly(x):
-                tto_m_total = len(x)
-                tto_m_breach = x['TTO_Done'].sum() if 'TTO_Done' in x.columns else 0
-                ttr_m_total = len(x[x['Status'] == 'Resolved']) # Only resolved tickets count for TTR
-                ttr_m_breach = x['TTR_Done'].sum() if 'TTR_Done' in x.columns else 0
-                
-                return pd.Series({
-                    'Volume': len(x),
-                    'TTO Perf %': ((tto_m_total - tto_m_breach) / tto_m_total * 100) if tto_m_total > 0 else 0,
-                    'TTR Perf %': ((ttr_m_total - ttr_m_breach) / ttr_m_total * 100) if ttr_m_total > 0 else 0,
-                    'Overall %': (((tto_m_total + ttr_m_total) - (tto_m_breach + ttr_m_breach)) / (tto_m_total + ttr_m_total) * 100) if (tto_m_total + ttr_m_total) > 0 else 0
-                })
+        def calc_monthly(x):
+            m_tto_total, m_tto_met = len(x), int((x['SLA tto passed'].astype(str).str.lower() == 'no').sum())
+            m_res = x[x['Status'] == 'Resolved']
+            m_ttr_total, m_ttr_met = len(m_res), int((m_res['SLA ttr passed'].astype(str).str.lower() == 'no').sum())
+            return pd.Series({
+                'Volume': float(m_tto_total),
+                'TTO Perf %': (m_tto_met / m_tto_total * 100) if m_tto_total > 0 else 0,
+                'TTR Perf %': (m_ttr_met / m_ttr_total * 100) if m_ttr_total > 0 else 0,
+                'Overall %': ((m_tto_met + m_ttr_met) / (m_tto_total + m_ttr_total) * 100) if (m_tto_total + m_ttr_total) > 0 else 0
+            })
 
-            monthly_perf = df_m.groupby(['Month_Sort', 'Month']).apply(calc_monthly).reset_index()
-            monthly_perf = monthly_perf.sort_values('Month_Sort', ascending=False).head(3)
+        monthly_perf = df_m.groupby(['Month_Sort', 'Month']).apply(calc_monthly).reset_index().sort_values('Month_Sort', ascending=False).head(3)
+        st.dataframe(
+            monthly_perf[['Month', 'Volume', 'TTO Perf %', 'TTR Perf %', 'Overall %']].style
+            .format({'Volume': '{:.0f}', 'TTO Perf %': '{:.1f}%', 'TTR Perf %': '{:.1f}%', 'Overall %': '{:.1f}%'})
+            .applymap(lambda v: f'color: {get_status_color(v)}; font-weight: bold;', subset=['TTO Perf %', 'TTR Perf %', 'Overall %']),
+            use_container_width=True, hide_index=True
+        )
 
-            # Styling logic for text colors based on 95% Target
-            def color_sla(val):
-                color = '#2E7D32' if val >= 95 else '#FF6600' if val >= 85 else '#D32F2F'
-                return f'color: {color}; font-weight: bold'
+    st.markdown("<br>", unsafe_allow_html=True) # Adding breathable space
 
-            # Display the enhanced table
-            st.dataframe(
-                monthly_perf[['Month', 'Volume', 'TTO Perf %', 'TTR Perf %', 'Overall %']].style
-                .format({'TTO Perf %': '{:.1f}%', 'TTR Perf %': '{:.1f}%', 'Overall %': '{:.1f}%'})
-                .applymap(color_sla, subset=['TTO Perf %', 'TTR Perf %', 'Overall %']),
-                use_container_width=True, hide_index=True
-            )
-        else:
-            st.info("Start Date column missing for trend analysis.")
+    # --- 4. ALL KPI CARDS (TTO, TTR, VOLUME, STATUS) ---
+    st.markdown("#### Time To Own (TTO) Metrics")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: kpi_card("TTO PERFORMANCE %", f"{tto_perf_pct:.1f}%", color=get_status_color(tto_perf_pct))
+    with c2: kpi_card("TTO MET", tto_met_count, color="#2E7D32")
+    with c3: kpi_card("TTO BREACH %", f"{tto_breach_pct:.1f}%", color="#C62828")
+    with c4: kpi_card("TTO BREACH", tto_breach_count, color="#D32F2F")
 
-        st.divider()
+    st.markdown("#### Time To Resolve (TTR) Metrics")
+    c5, c6, c7, c8 = st.columns(4)
+    with c5: kpi_card("TTR PERFORMANCE %", f"{ttr_perf_pct:.1f}%", color=get_status_color(ttr_perf_pct))
+    with c6: kpi_card("TTR MET", ttr_met_count, color="#2E7D32")
+    with c7: kpi_card("TTR BREACH %", f"{ttr_breach_pct:.1f}%", color="#C62828")
+    with c8: kpi_card("TTR BREACH", ttr_breach_count, color="#D32F2F")
 
-        # --- 2. DETAILED KPI CARDS (TTO & TTR) ---
-        st.markdown("#### Time To Own (TTO) Metrics")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: kpi_card("TTO PERFORMANCE %", f"{tto_perf_pct:.1f}%", color="#2E7D32" if tto_perf_pct >= 90 else "#FF6600")
-        with c2: kpi_card("TTO MET", f"{tto_met_count}", color="#2E7D32")
-        with c3: kpi_card("TTO BREACH %", f"{tto_breach_pct:.1f}%", color="#D32F2F")
-        with c4: kpi_card("TTO BREACH", tto_breach_count, color="#D32F2F")
+    st.markdown("#### Volume & Status Summary")
+    cv1, cv2, cv3 = st.columns(3)
+    with cv1: kpi_card("TOTAL VOLUME", total_v, color="#0277BD")
+    with cv2: kpi_card("BACKLOG", backlog_val, color="#E91E63")
+    with cv3: kpi_card("AGED (>30 DAYS)", aged_count, color="#6A1B9A")
 
-        st.markdown("#### Time To Resolve (TTR) Metrics")
-        c5, c6, c7, c8 = st.columns(4)
-        with c5: kpi_card("TTR PERFORMANCE %", f"{ttr_perf_pct:.1f}%", color="#2E7D32" if ttr_perf_pct >= 90 else "#FF6600")
-        with c6: kpi_card("TTR MET", f"{ttr_met_count}", color="#2E7D32")
-        with c7: kpi_card("TTR BREACH %", f"{ttr_breach_pct:.1f}%", color="#D32F2F")
-        with c8: kpi_card("TTR BREACH", ttr_breach_count, color="#D32F2F")
+    if status_col and not df.empty:
+        status_counts = df[status_col].value_counts()
+        s_cols = st.columns(len(status_counts))
+        for i, (name, count) in enumerate(status_counts.items()):
+            with s_cols[i]: kpi_card(name.upper(), count, color="#455A64")
 
-        # --- 3. VOLUME & STATUS METRICS ---
-        st.write("### Overall Volume & Status")
-        c9, c10, c11 = st.columns(3)
-        with c9: kpi_card("TOTAL VOLUME", total_v, color="#1F3B4D")
-        with c10: kpi_card("TOTAL BACKLOG", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
-        with c11: kpi_card("AGED (>30 DAYS)", aged_count, color="#7B1FA2")
+    st.divider()
 
-        # Status Cards Row
-        if status_col and not df.empty:
-            status_counts = df[status_col].value_counts()
-            if not status_counts.empty:
-                stat_cols = st.columns(len(status_counts))
-                for i, (name, count) in enumerate(status_counts.items()):
-                    with stat_cols[i]:
-                        kpi_card(name.upper(), count, color="#FF6600")
+    # --- 5. SIDE-BY-SIDE TABLES ---
+    available_cols = [c for c in ['Ref', 'Title', sd_col, 'Agent', 'Status'] if c in df.columns]
+    col_l, col_r = st.columns(2)
 
-        st.divider()
+    with col_l:
+        st.markdown("<h6 style='margin-bottom: 8px;'>Pending Tickets</h6>", unsafe_allow_html=True)
+        st.dataframe(
+            df_pending[available_cols].style.applymap(lambda x: 'color: #FFD600; font-weight: bold;' if x == 'Pending' else '', subset=['Status']) 
+            if not df_pending.empty else pd.DataFrame(), 
+            use_container_width=True, hide_index=True, height=220
+        )
 
-        # --- 4. ACTIONABLE DATA TABLES ---
-        available_cols = [c for c in ['Ref', 'Title', sd_col, 'Agent', org_col_name, 'Status'] if c in df.columns]
-        
-        col_p, col_a = st.columns(2)
-        with col_p:
-            st.subheader("Pending Tickets")
-            if not df_pending.empty:
-                st.dataframe(df_pending[available_cols], use_container_width=True, hide_index=True)
-            else:
-                st.info("No pending tickets.")
-                
-        with col_a:
-            st.subheader("Aged Tickets (>30 Days)")
-            if not df_aged.empty:
-                st.dataframe(df_aged[available_cols], use_container_width=True, hide_index=True)
-            else:
-                st.success("No aged tickets found.")
+    with col_r:
+        st.markdown("<h6 style='margin-bottom: 8px;'>Aged Tickets (>30 Days)</h6>", unsafe_allow_html=True)
+        st.dataframe(
+            df_aged[available_cols].style.applymap(lambda x: 'background-color: rgba(255, 82, 82, 0.1); color: #FF5252; font-weight: bold;', subset=['Ref']) 
+            if not df_aged.empty else pd.DataFrame(), 
+            use_container_width=True, hide_index=True, height=220
+        )
 
 # --- TAB 2: PERSONNEL PERFORMANCE ---
-    with tab2:
-        if not df.empty and 'Agent' in df.columns:
-            # Aggregate Data by Agent
-            agent_stats = df.groupby('Agent').agg(
-                Total_Tickets=('Ref', 'count'),
-                TTO_Met_Sum=('TTO MET', 'sum'),
-                TTR_Met_Sum=('TTR MET', 'sum')
-            ).reset_index()
+with tab2:
+    if not df.empty and 'Agent' in df.columns:
+        # 1. FIX THE 0% LOGIC: Create numeric Success/Breach columns
+        # Mapping 'no' to 1 (Success) and everything else to 0 (Breach)
+        df['TTO MET NUM'] = df['SLA tto passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
+        df['TTR MET NUM'] = df['SLA ttr passed'].astype(str).str.lower().map({'no': 1}).fillna(0)
 
-            # Calculate percentages based on the synced MET columns
-            agent_stats['TTO %'] = (agent_stats['TTO_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
-            agent_stats['TTR %'] = (agent_stats['TTR_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
+        # 2. AGGREGATE DATA BY AGENT
+        agent_stats = df.groupby('Agent').agg(
+            Total_Tickets=('Ref', 'count'),
+            TTO_Met_Sum=('TTO MET NUM', 'sum'),
+            TTR_Met_Sum=('TTR MET NUM', 'sum')
+        ).reset_index()
+
+        # 3. CALCULATE PERCENTAGES
+        agent_stats['TTO %'] = (agent_stats['TTO_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
+        agent_stats['TTR %'] = (agent_stats['TTR_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
+        agent_stats['Overall %'] = ((agent_stats['TTO %'] + agent_stats['TTR %']) / 2).round(1)
+        
+        # Sort by most active agents
+        agent_stats = agent_stats.sort_values(by='Total_Tickets', ascending=False)
+
+        # 4. TOP PERFORMER HIGHLIGHT (Colorful Leaderboard)
+        st.markdown("### Personnel Performance Insights")
+        
+        top_agent_row = agent_stats.sort_values('Overall %', ascending=False).iloc[0]
+        
+        l_col, r_col = st.columns([1, 2])
+        
+        with l_col:
+            # Custom styled badge for top technician
+            st.markdown(f"""
+                <div style="background-color: rgba(0, 230, 118, 0.1); padding: 20px; border-radius: 10px; border-left: 5px solid #00E676;">
+                    <h5 style="margin:0; color: #00E676;">TOP PERFORMER</h5>
+                    <h2 style="margin:0;">{top_agent_row['Agent']}</h2>
+                    <p style="margin:0; font-size: 14px; color: gray;">{top_agent_row['Overall %']}% Combined Score</p>
+                </div>
+            """, unsafe_allow_html=True)
             
-            # Sort by volume to show most active agents first
-            agent_stats = agent_stats.sort_values(by='Total_Tickets', ascending=False)
+            # Radar chart for visual flair
+            categories = ['TTO %', 'TTR %', 'Overall %']
+            fig_radar = go.Figure()
+            fig_radar.add_trace(go.Scatterpolar(
+                r=[top_agent_row['TTO %'], top_agent_row['TTR %'], top_agent_row['Overall %']],
+                theta=categories,
+                fill='toself',
+                line_color='#00B0FF'
+            ))
+            fig_radar.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                showlegend=False, height=250, margin=dict(t=30, b=20, l=30, r=30),
+                paper_bgcolor='rgba(0,0,0,0)'
+            )
+            st.plotly_chart(fig_radar, use_container_width=True)
 
-            # Chart visualization
+        with r_col:
+            # Modern bar chart
             fig_agent = px.bar(
                 agent_stats, 
                 x='Agent', 
                 y=['TTO %', 'TTR %'],
                 barmode='group', 
                 title="SLA Achievement by Technician",
-                color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'},
+                color_discrete_sequence=['#00B0FF', '#7B1FA2'],
                 labels={'value': 'Percentage (%)', 'variable': 'Metric'}
             )
-            
-            # Add target line (83.7%)
-            fig_agent.add_hline(y=83.7, line_dash="dot", line_color="red", annotation_text="Target 83.7%")
-            fig_agent.update_layout(yaxis_range=[0, 105])
-            
-            st.plotly_chart(fig_agent, use_container_width=True)
-
-            # Performance Table with Progress Bars
-            st.markdown("#### Detailed Personnel Metrics")
-            st.dataframe(
-                agent_stats[['Agent', 'Total_Tickets', 'TTO %', 'TTR %']],
-                use_container_width=True, 
-                hide_index=True,
-                column_config={
-                    "Agent": st.column_config.TextColumn("Technician"),
-                    "Total_Tickets": st.column_config.NumberColumn("Tickets Handled"),
-                    "TTO %": st.column_config.ProgressColumn(
-                        "TTO Performance", 
-                        min_value=0, 
-                        max_value=100, 
-                        format="%.1f%%"
-                    ),
-                    "TTR %": st.column_config.ProgressColumn(
-                        "TTR Performance", 
-                        min_value=0, 
-                        max_value=100, 
-                        format="%.1f%%"
-                    )
-                }
+            fig_agent.add_hline(y=83.7, line_dash="dot", line_color="#FF5252", annotation_text="Target 83.7%")
+            fig_agent.update_layout(
+                yaxis_range=[0, 110],
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-        else:
-            st.info("Agent data is not available for the current selection.")
-
-# --- TAB 3: GROUP HIERARCHY ---
-    with tab3:
-        
-        # FORCE MAPPING: Ensure the function runs on the current dataframe
-        org_col_for_mapping = next((c for c in df.columns if 'organization' in c.lower() or 'customer' in c.lower()), None)
-        if org_col_for_mapping:
-            df['Parent_Company'] = df[org_col_for_mapping].apply(get_parent_company)
-
-        if 'Parent_Company' in df.columns:
-            # 1. Top Customers Table (Using 'df' instead of 'df_base')
-            parent_summary = df.groupby('Parent_Company').agg({
-                'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
-            }).reset_index().sort_values('Ref', ascending=False)
-
-            parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).fillna(0).round(1)
-            parent_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
-            
-            st.write("#### Top Customers by Parent Group")
-            st.dataframe(parent_summary, use_container_width=True, hide_index=True)
-            st.markdown("---")
-        
-            # 2. Parent Group Distribution
-            st.write("#### Parent Group Ticket Distribution")
-            parent_list = sorted(df['Parent_Company'].dropna().unique().tolist())
-            target_parent = st.selectbox("Select Parent Conglomerate", options=parent_list, key="parent_explorer_select")
-            
-            if target_parent:
-                hierarchy_df = df[df['Parent_Company'] == target_parent]
-                
-                expected_columns = ['Organization->Name', 'Organization Name', 'Organization', 'Customer', 'Subsidiary']
-                actual_org_col = next((c for c in expected_columns if c in hierarchy_df.columns), None)
-                
-                if actual_org_col:
-                    subsidiaries = hierarchy_df.groupby(actual_org_col).agg({
-                        'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
-                    }).reset_index().sort_values('Ref', ascending=False)
-                    
-                    subsidiaries['TTO %'] = (subsidiaries['TTO_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
-                    subsidiaries['TTR %'] = (subsidiaries['TTR_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
-                    subsidiaries.columns = ['Subsidiary/Brand', 'Ticket Count', 'TTO Met', 'TTR Met', 'TTO Compliance %', 'TTR Compliance %']
-                    
-                    c_left, c_right = st.columns([1, 1.2])
-                    with c_left:
-                        st.metric(f"Total Tickets: {target_parent}", len(hierarchy_df))
-                        st.dataframe(subsidiaries, use_container_width=True, hide_index=True)
-                    with c_right:
-                        fig_sub = px.bar(
-                            subsidiaries.head(10).sort_values('Ticket Count', ascending=True), 
-                            x='Ticket Count', y='Subsidiary/Brand', orientation='h', 
-                            title=f"Top 10 Customers in {target_parent}",
-                            color_discrete_sequence=['#FF6600'], template="plotly_dark"
-                        )
-                        fig_sub.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                        st.plotly_chart(fig_sub, use_container_width=True)
-        else:
-            st.warning("Mapping column 'Parent_Company' not found.")
-
-# --- TAB 4: EXECUTIVE REPORT ---
-    with tab4:
-        st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
-        
-        # 1. Date Label Logic
-        # Checking against the sidebar date filter variables
-        if 'start_date' in locals() and 'end_date' in locals():
-            date_label = f"{start_date} to {end_date}"
-        else:
-            date_label = "Full Operational Range"
-
-        st.caption(f"Operational Scope: {selected_unit.upper()} | Period: {date_label}")
-
-        # 2. Performance Metrics Calculation
-        # These variables are now derived directly from the 'df' passed into the function
-        current_total = len(df)
-        
-        # Map to the columns established in the sync script
-        tto_col = 'TTO MET' if 'TTO MET' in df.columns else 'TTO_Done'
-        ttr_col = 'TTR MET' if 'TTR MET' in df.columns else 'TTR_Done'
-
-        rep_tto = (df[tto_col].sum() / current_total * 100) if current_total > 0 and tto_col in df.columns else 0
-        rep_ttr = (df[ttr_col].sum() / current_total * 100) if current_total > 0 and ttr_col in df.columns else 0
-        
-        # Calculate breach count for the risk section
-        total_ttr_breaches = (current_total - int(df[ttr_col].sum())) if ttr_col in df.columns else 0
-
-        # Display Top Metrics Row
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Selected Volume", f"{current_total:,}")
-        m2.metric("TTO Compliance", f"{rep_tto:.1f}%")
-        m3.metric("TTR Compliance", f"{rep_ttr:.1f}%")
-        # aged_count is calculated at the top of the render function
-        m4.metric("Aged Backlog", aged_count)
+            st.plotly_chart(fig_agent, use_container_width=True)
 
         st.divider()
 
-        # 3. Risk Analysis Section
-        col_risk, col_drivers = st.columns(2)
-        
-        with col_risk:
-            st.error(f"### Critical Risks\n* **Aged Tickets (>30 Days):** {aged_count}\n* **SLA Breaches (TTR):** {total_ttr_breaches}")
-        
-        with col_drivers:
-            st.info("### Delay Drivers\nTop factors currently impacting resolution times include pending vendor feedback and high-complexity service holds.")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # 4. Board Assets (PDF Generation)
-        st.subheader("Board Meeting Assets")
-        if st.button("PREPARE PDF REPORT", use_container_width=True):
-            try:
-                # Passing calculated metrics to your PDF generator function
-                pdf_bytes = generate_board_pdf(
-                    current_total, 
-                    0, # Placeholder for other count if needed
-                    rep_tto, 
-                    rep_ttr, 
-                    aged_count, 
-                    total_ttr_breaches, 
-                    selected_unit, 
-                    date_label, 
-                    "General Analysis"
+        # 5. DETAILED TABLE WITH COLORFUL PROGRESS BARS
+        st.markdown("#### Detailed Personnel Metrics")
+        st.dataframe(
+            agent_stats[['Agent', 'Total_Tickets', 'TTO %', 'TTR %', 'Overall %']],
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Agent": st.column_config.TextColumn("Technician"),
+                "Total_Tickets": st.column_config.NumberColumn("Tickets Handled"),
+                "TTO %": st.column_config.ProgressColumn(
+                    "TTO Health", 
+                    min_value=0, max_value=100, format="%.1f%%"
+                ),
+                "TTR %": st.column_config.ProgressColumn(
+                    "TTR Health", 
+                    min_value=0, max_value=100, format="%.1f%%"
+                ),
+                "Overall %": st.column_config.NumberColumn(
+                    "Efficiency Score",
+                    format="%.1f%%"
                 )
-                
-                st.download_button(
-                    label="DOWNLOAD BOARD-READY PDF BROCHURE",
-                    data=pdf_bytes,
-                    file_name=f"Executive_Summary_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"Error generating report: {e}")
-                
-# --- TAB 5: AUDIT HISTORY ---
-    with tab5:
-        
-        view_mode = st.radio(
-            "Select View Mode:", 
-            ["Search Specific Ticket", "View Entire Historical Log"], 
-            horizontal=True, 
-            key="audit_view_radio"
+            }
         )
+    else:
+        st.info("Agent data is not available for the current selection.")
 
+# --- TAB 3: GROUP HIERARCHY (RESTORED TABLE + COLORFUL CARDS) ---
+with tab3:
+    # 1. DATA PREPARATION (Maintaining existing mapping logic)
+    org_col_for_mapping = next((c for c in df.columns if 'organization' in c.lower() or 'customer' in c.lower()), None)
+    if org_col_for_mapping:
+        df['Parent_Company'] = df[org_col_for_mapping].apply(get_parent_company)
+
+    if 'Parent_Company' in df.columns:
+        # 2. AGGREGATE SUMMARY
+        parent_summary = df.groupby('Parent_Company').agg({
+            'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
+        }).reset_index().sort_values('Ref', ascending=False)
+
+        parent_summary['TTO %'] = (parent_summary['TTO_Done'] / parent_summary['Ref'] * 100).fillna(0).round(1)
+        
+        # 3. COLORFUL GRADIENT CARDS (Top Overview)
+        k_col1, k_col2, k_col3 = st.columns(3)
+        
+        with k_col1:
+            st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #1A237E, #0D47A1); padding: 15px; border-radius: 12px; border-left: 6px solid #00E5FF;">
+                    <p style="margin:0; font-size: 11px; color: #BBDEFB; font-weight: bold; text-transform: uppercase;">Total Groups</p>
+                    <h2 style="margin:0; color: white; font-size: 28px;">{len(parent_summary)}</h2>
+                </div>""", unsafe_allow_html=True)
+        
+        with k_col2:
+            top_val = parent_summary.iloc[0]['Parent_Company'] if not parent_summary.empty else "N/A"
+            st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #1B5E20, #2E7D32); padding: 15px; border-radius: 12px; border-left: 6px solid #00FF87;">
+                    <p style="margin:0; font-size: 11px; color: #C8E6C9; font-weight: bold; text-transform: uppercase;">Lead Partner</p>
+                    <h2 style="margin:0; color: white; font-size: 18px; padding-top: 5px;">{top_val}</h2>
+                </div>""", unsafe_allow_html=True)
+                
+        with k_col3:
+            avg_tto = parent_summary['TTO %'].mean().round(1) if not parent_summary.empty else 0
+            st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #4A148C, #6A1B9A); padding: 15px; border-radius: 12px; border-left: 6px solid #FF007A;">
+                    <p style="margin:0; font-size: 11px; color: #E1BEE7; font-weight: bold; text-transform: uppercase;">Group Compliance</p>
+                    <h2 style="margin:0; color: white; font-size: 28px;">{avg_tto}%</h2>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # 4. RESTORED: TOP CUSTOMERS TABLE (With Colorful Progress Bars)
+        st.write("#### Top Customers by Parent Group")
+        
+        # Renaming for display as per your original request
+        display_summary = parent_summary.copy()
+        display_summary.columns = ['Parent Conglomerate', 'Total Volume', 'TTO Met', 'TTR Met', 'TTO Compliance %']
+        
+        st.dataframe(
+            display_summary, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Parent Conglomerate": st.column_config.TextColumn("Parent Conglomerate", width="large"),
+                "Total Volume": st.column_config.NumberColumn("Tickets"),
+                "TTO Compliance %": st.column_config.ProgressColumn(
+                    "Compliance", 
+                    min_value=0, 
+                    max_value=100, 
+                    format="%.1f%%"
+                )
+            }
+        )
+        
+        st.markdown("---")
+        
+        # 5. PARENT GROUP DISTRIBUTION (Original Feature)
+        st.write("#### Parent Group Ticket Distribution")
+        parent_list = sorted(df['Parent_Company'].dropna().unique().tolist())
+        target_parent = st.selectbox("Select Parent Conglomerate", options=parent_list, key="parent_explorer_select")
+        
+        if target_parent:
+            hierarchy_df = df[df['Parent_Company'] == target_parent]
+            actual_org_col = next((c for c in ['Organization->Name', 'Organization Name', 'Organization', 'Customer'] if c in hierarchy_df.columns), None)
+            
+            if actual_org_col:
+                subsidiaries = hierarchy_df.groupby(actual_org_col).agg({
+                    'Ref': 'count', 'TTO_Done': 'sum', 'TTR_Done': 'sum'
+                }).reset_index().sort_values('Ref', ascending=False)
+                
+                subsidiaries['TTO %'] = (subsidiaries['TTO_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
+                subsidiaries['TTR %'] = (subsidiaries['TTR_Done'] / subsidiaries['Ref'] * 100).fillna(0).round(1)
+                
+                c_left, c_right = st.columns([1, 1.2])
+                with c_left:
+                    st.metric(f"Total Tickets: {target_parent}", len(hierarchy_df))
+                    st.dataframe(
+                        subsidiaries, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            actual_org_col: "Subsidiary",
+                            "TTO %": st.column_config.ProgressColumn("TTO", min_value=0, max_value=100),
+                            "TTR %": st.column_config.ProgressColumn("TTR", min_value=0, max_value=100)
+                        }
+                    )
+                with c_right:
+                    fig_sub = px.bar(
+                        subsidiaries.head(10).sort_values('Ref', ascending=True), 
+                        x='Ref', y=actual_org_col, orientation='h', 
+                        title=f"Top 10 Customers in {target_parent}",
+                        color_discrete_sequence=['#FF6600'], 
+                        template="plotly_dark"
+                    )
+                    fig_sub.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig_sub, use_container_width=True)
+    else:
+        st.warning("Mapping column 'Parent_Company' not found.")
+
+# --- TAB 4: EXECUTIVE REPORT (COMPACT VIBRANT EDITION) ---
+with tab4:
+    st.markdown('<h2 style="color: #FF6600; margin-top: 0; margin-bottom: 5px; font-size: 24px;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
+    
+    if 'start_date' in locals() and 'end_date' in locals():
+        date_label = f"{start_date} to {end_date}"
+    else:
+        date_label = "Full Operational Range"
+
+    st.caption(f"Scope: {selected_unit.upper()} | {date_label}")
+
+    # 1. Calculations (Existing Logic)
+    current_total = len(df)
+    tto_col = 'TTO MET' if 'TTO MET' in df.columns else 'TTO_Done'
+    ttr_col = 'TTR MET' if 'TTR MET' in df.columns else 'TTR_Done'
+
+    rep_tto = (df[tto_col].sum() / current_total * 100) if current_total > 0 and tto_col in df.columns else 0
+    rep_ttr = (df[ttr_col].sum() / current_total * 100) if current_total > 0 and ttr_col in df.columns else 0
+    total_ttr_breaches = (current_total - int(df[ttr_col].sum())) if ttr_col in df.columns else 0
+
+    # 2. SMALL COLORFUL GRADIENT CARDS
+    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+    
+    # CSS for compact styling
+    card_style = "padding: 10px; border-radius: 8px; text-align: center; height: 80px; display: flex; flex-direction: column; justify-content: center; box-shadow: 1px 2px 5px rgba(0,0,0,0.2);"
+
+    with m_col1:
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #1A237E, #1E88E5); {card_style} border-left: 4px solid #00E5FF;">
+            <p style="margin:0; font-size: 10px; color: #BBDEFB; font-weight: bold;">VOLUME</p>
+            <h3 style="margin:0; color: white; font-size: 20px;">{current_total:,}</h3></div>""", unsafe_allow_html=True)
+            
+    with m_col2:
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #1B5E20, #43A047); {card_style} border-left: 4px solid #00FF87;">
+            <p style="margin:0; font-size: 10px; color: #C8E6C9; font-weight: bold;">TTO %</p>
+            <h3 style="margin:0; color: white; font-size: 20px;">{rep_tto:.1f}%</h3></div>""", unsafe_allow_html=True)
+
+    with m_col3:
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #E65100, #FB8C00); {card_style} border-left: 4px solid #FFD600;">
+            <p style="margin:0; font-size: 10px; color: #FFE0B2; font-weight: bold;">TTR %</p>
+            <h3 style="margin:0; color: white; font-size: 20px;">{rep_ttr:.1f}%</h3></div>""", unsafe_allow_html=True)
+
+    with m_col4:
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #B71C1C, #D32F2F); {card_style} border-left: 4px solid #FF5252;">
+            <p style="margin:0; font-size: 10px; color: #FFCDD2; font-weight: bold;">AGED</p>
+            <h3 style="margin:0; color: white; font-size: 20px;">{aged_count}</h3></div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 3. Risk Analysis Section (Preserved)
+    col_risk, col_drivers = st.columns(2)
+    with col_risk:
+        st.error(f"**Critical Risks**\n* Aged Tickets: {aged_count}\n* SLA Breaches: {total_ttr_breaches}")
+    with col_drivers:
+        st.info("**Delay Drivers**\nPending vendor feedback and high-complexity service holds.")
+
+    # 4. Board Assets (Preserved)
+    st.markdown("---")
+    if st.button("PREPARE PDF REPORT", use_container_width=True):
         try:
-            # Using the established SQLAlchemy engine
-            with engine.connect() as conn:
-                if view_mode == "Search Specific Ticket":
-                    search_ref = st.text_input("Enter Ticket Ref ID:", placeholder="e.g. R-154009", key="ticket_search_input")
-                    
-                    if search_ref:
-                        # Use text() for secure parameterized queries
-                        query = text("""
-                            SELECT Status_Log_Date, Ref, Current_Status, Agent 
-                            FROM history_table 
-                            WHERE Ref = :ref 
-                            ORDER BY Status_Log_Date ASC
-                        """)
-                        history_df = pd.read_sql(query, conn, params={"ref": search_ref.strip()})
-                        
-                        if not history_df.empty:
-                            # 1. Calculate Duration Logic
-                            history_df['Status_Log_Date'] = pd.to_datetime(history_df['Status_Log_Date'])
-                            
-                            # Calculate time difference between status changes
-                            history_df['Duration'] = history_df['Status_Log_Date'].diff().shift(-1)
-                            
-                            def format_duration(td):
-                                if pd.isna(td): return "Active Now"
-                                days = td.days
-                                hours, remainder = divmod(td.seconds, 3600)
-                                minutes, _ = divmod(remainder, 60)
-                                if days > 0:
-                                    return f"{days}d {hours}h {minutes}m"
-                                return f"{hours}h {minutes}m"
+            pdf_bytes = generate_board_pdf(
+                current_total, 0, rep_tto, rep_ttr, 
+                aged_count, total_ttr_breaches, selected_unit, 
+                date_label, "General Analysis"
+            )
+            st.download_button(
+                label="DOWNLOAD PDF",
+                data=pdf_bytes,
+                file_name=f"Executive_Summary_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Error: {e}")
+                
+# --- TAB 5: AUDIT HISTORY (ORGANIZED SUB-TABS) ---
+with tab5:
+    # Internal CSS for clean, non-vibrant color accents
+    st.markdown("""
+        <style>
+        /* Clean Colored Search Bar */
+        div[data-testid="stTextInput"] > div[data-baseweb="input"] {
+            border: 1px solid #FF6600 !important;
+            border-radius: 8px !important;
+            background-color: #fdfdfd !important;
+            color: #000000 !important;
+        }
+        /* Style for the sub-tabs to make them stand out */
+        button[data-baseweb="tab"] {
+            background-color: transparent !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-                            history_df['Time Spent'] = history_df['Duration'].apply(format_duration)
-                            
-                            # Prepare for display (Latest status at top)
-                            display_df = history_df.sort_values(by='Status_Log_Date', ascending=False).copy()
-                            display_df.rename(columns={
-                                'Status_Log_Date': 'Date & Time', 
-                                'Current_Status': 'Status', 
-                                'Ref': 'Ticket ID'
-                            }, inplace=True)
-                            
-                            display_df['Date & Time'] = display_df['Date & Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+    # Creating Two Tabs inside Tab 5
+    sub_tab1, sub_tab2 = st.tabs(["TICKET LOOKUP", "HISTORICAL LOG"])
 
-                            # 2. Status Highlighting Logic
-                            def apply_hc_style(val):
-                                s = str(val).strip().lower()
-                                if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
-                                if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
-                                if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
-                                if 'escalated' in s: return 'background-color: #dc3545; color: white; font-weight: bold;'
-                                return ''
-
-                            st.dataframe(
-                                display_df[['Date & Time', 'Status', 'Time Spent', 'Agent']].style.applymap(
-                                    apply_hc_style, subset=['Status']
-                                ),
-                                use_container_width=True, 
-                                hide_index=True
-                            )
-                        else:
-                            st.warning(f"No records found for Ticket ID: {search_ref}")
-
-                else:
-                    # Full Log View (Limited to 1000 for performance)
-                    full_query = text("""
-                        SELECT Status_Log_Date as 'Date & Time', 
-                               Ref as 'Ticket ID', 
-                               Current_Status as 'Status', 
-                               Agent 
+    # --- SUB-TAB 1: SEARCH SPECIFIC TICKET ---
+    with sub_tab1:
+        st.markdown('<p style="color: #FF6600; font-weight: bold; font-size: 18px;">Search Audit Trail</p>', unsafe_allow_html=True)
+        
+        search_ref = st.text_input(
+            "Enter Ticket Ref ID:", 
+            placeholder="e.g. R-154009", 
+            key="ticket_search_sub"
+        )
+        
+        if search_ref:
+            try:
+                with engine.connect() as conn:
+                    query = text("""
+                        SELECT Status_Log_Date, Ref, Current_Status, Agent 
                         FROM history_table 
-                        ORDER BY Status_Log_Date DESC 
-                        LIMIT 1000
+                        WHERE Ref = :ref 
+                        ORDER BY Status_Log_Date ASC
                     """)
-                    full_df = pd.read_sql(full_query, conn)
+                    history_df = pd.read_sql(query, conn, params={"ref": search_ref.strip()})
+                    
+                    if not history_df.empty:
+                        # Logic for Duration
+                        history_df['Status_Log_Date'] = pd.to_datetime(history_df['Status_Log_Date'])
+                        history_df['Duration'] = history_df['Status_Log_Date'].diff().shift(-1)
+                        
+                        def format_duration(td):
+                            if pd.isna(td): return "Active"
+                            days = td.days
+                            hours, remainder = divmod(td.seconds, 3600)
+                            minutes, _ = divmod(remainder, 60)
+                            return f"{days}d {hours}h" if days > 0 else f"{hours}h {minutes}m"
 
-                    if not full_df.empty:
-                        full_df['Date & Time'] = pd.to_datetime(full_df['Date & Time']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                        history_df['Time Spent'] = history_df['Duration'].apply(format_duration)
+                        
+                        # Displaying a clean color-coded status table
+                        display_df = history_df.sort_values(by='Status_Log_Date', ascending=False).copy()
+                        display_df['Date & Time'] = display_df['Status_Log_Date'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-                        def apply_full_hc_style(val):
-                            s = str(val).strip().lower()
-                            if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
-                            if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
-                            if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
-                            return 'background-color: #6c757d; color: white;'
+                        def style_status(val):
+                            s = str(val).lower()
+                            if 'resolved' in s: return 'background-color: #d4edda; color: #155724;' # Light Green
+                            if 'pending' in s: return 'background-color: #fff3cd; color: #856404;'  # Light Yellow
+                            if 'assigned' in s: return 'background-color: #cce5ff; color: #004085;' # Light Blue
+                            return ''
 
                         st.dataframe(
-                            full_df.style.applymap(apply_full_hc_style, subset=['Status']),
+                            display_df[['Date & Time', 'Current_Status', 'Time Spent', 'Agent']].style.applymap(
+                                style_status, subset=['Current_Status']
+                            ),
                             use_container_width=True, 
                             hide_index=True
                         )
-                        
-                        # Export functionality
-                        csv = full_df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="Export Audit Trail (CSV)", 
-                            data=csv, 
-                            file_name="audit_trail_export.csv", 
-                            mime="text/csv",
-                            use_container_width=True
-                        )
                     else:
-                        st.info("The history table is currently empty.")
+                        st.warning(f"No records found for: {search_ref}")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
+    # --- SUB-TAB 2: VIEW ENTIRE LOG ---
+    with sub_tab2:
+        st.markdown('<p style="color: #1F3B4D; font-weight: bold; font-size: 18px;">Full Operational History</p>', unsafe_allow_html=True)
+        
+        try:
+            with engine.connect() as conn:
+                full_query = text("""
+                    SELECT Status_Log_Date as 'Date & Time', 
+                           Ref as 'Ticket ID', 
+                           Current_Status as 'Status', 
+                           Agent 
+                    FROM history_table 
+                    ORDER BY Status_Log_Date DESC 
+                    LIMIT 500
+                """)
+                full_df = pd.read_sql(full_query, conn)
+
+                if not full_df.empty:
+                    full_df['Date & Time'] = pd.to_datetime(full_df['Date & Time']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Subtle Table Styling
+                    st.dataframe(full_df, use_container_width=True, hide_index=True)
+                    
+                    # Clean Export Button
+                    csv = full_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="Download CSV Report", 
+                        data=csv, 
+                        file_name="audit_history.csv", 
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.info("The history table is empty.")
         except Exception as e:
-            st.error(f"Audit Trail System Error: {str(e)}")
+            st.error(f"Error: {e}")
 
 # --- 1. PDF CLASS DEFINITION ---
 class SITS_Report(FPDF):
@@ -1408,4 +1549,5 @@ if not st.session_state.data.empty:
     sync_dashboard_ui()
 else:
     st.info("No data available. Click 'REFRESH & WIPE DB' to import data from Excel.")
+
 
