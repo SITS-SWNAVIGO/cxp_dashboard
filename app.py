@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import requests
 import plotly.express as px
 import os
 from io import BytesIO
@@ -8,36 +7,36 @@ from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 import base64
 from fpdf import FPDF
-import master_data_sync  
+import master_data_sync
 import time
-import master_data_sync 
-import sqlite3
-from streamlit_autorefresh import st_autorefresh
+from pathlib import Path
+import streamlit as st
+import pandas as pd
+import os
+import base64
+from io import BytesIO
+import requests
+from sqlalchemy import text
 
-# interval is in milliseconds (300,000 ms = 5 minutes)
-count = st_autorefresh(interval=300000, key="fivedatarefresh")
-
-# --- 1. CONFIGURATION (Direct MySQL Connection) ---
-# We use the same credentials as your master_data_sync.py
-DB_HOST = "staging_sits_analytics"
+# --- 1. CONFIGURATION (MySQL Connection) ---
+DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
 DB_NAME = "sits_analytics"
-DB_PORT = "3306"
+DB_PORT = "3309"
 
-# The connection string for MySQL
-# Use "mysql+mysqlconnector" to ensure compatibility
+# Using PyMySQL driver (make sure it's installed)
 CONNECTION_URL = f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- 2. PAGE CONFIG ---
 st.set_page_config(
-    page_title="CXP Analytics", 
-    layout="wide", 
+    page_title="CXP Analytics",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- 3. DATABASE ENGINE SETUP ---
-# pool_pre_ping=True helps keep the connection alive on the Easypanel server
+# pool_pre_ping=True keeps connection alive
 engine = create_engine(
     CONNECTION_URL,
     pool_size=5,
@@ -46,11 +45,15 @@ engine = create_engine(
 )
 
 # --- 3. SYSTEM INITIALIZATION ---
+
+# Initialize a global placeholder for the filtered dataframe
+df = pd.DataFrame()
+@st.cache_resource(show_spinner=False)
 def initialize_system():
-    """Ensures the users table exists in the MySQL database."""
+    """Ensures the users table exists and a super_admin is created."""
     try:
-        with engine.begin() as conn:
-            # Create User Table if missing (MySQL uses VARCHAR for lengths)
+        with engine.connect() as conn:
+            # Create User Table if missing
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS users (
                     username VARCHAR(255) PRIMARY KEY,
@@ -69,14 +72,21 @@ def initialize_system():
                     INSERT INTO users (username, password, role) 
                     VALUES ('admin', 'Admin@CXP', 'super_admin')
                 """))
+                
+        return True
     except Exception as e:
-        st.error(f"Database Initialization Error: {e}")
+        # Log the error but don't break sidebar
+        print(f"Database Initialization Error: {e}")
+        return False
 
-# Run initialization immediately when app starts
-initialize_system()
+# Run initialization
+init_success = initialize_system()
+if not init_success:
+    st.warning("Database not fully initialized. Some functions may fail.")
 
 # --- 4. DATA & AUTH FUNCTIONS ---
 
+@st.cache_data(show_spinner=False)
 def get_db_user(username, password):
     """Authenticates users against the live MySQL database."""
     try:
@@ -85,210 +95,206 @@ def get_db_user(username, password):
             result = conn.execute(query, {"u": username, "p": password}).fetchone()
             return result[0] if result else None
     except Exception as e:
-        st.error(f"Authentication Error: {e}")
+        print(f"Authentication Error: {e}")  # Avoid blocking UI
         return None
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_from_db():
-    """Retrieves the live analytics data pushed by your local sync script."""
+    """Retrieves live analytics data pushed by your local sync script."""
     try:
         with engine.connect() as conn:
             query = text("SELECT * FROM analytics_data")
             return pd.read_sql(query, conn)
     except Exception as e:
-        st.warning("No data found in database. Please run the local sync script.")
+        print(f"No data found in database: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=60)
 def get_db_last_updated():
-    """Displays the current status of the Easypanel database connection."""
+    """Displays current status of the Easypanel database connection."""
     try:
         with engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM analytics_data")).scalar()
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             return f"🟢 Live Connection | Records: {count:,} | Last Check: {now_str}"
-    except Exception:
+    except Exception as e:
+        print(f"DB Connection Error: {e}")
         return "🔴 Database Connection Offline"
 
 # --- LOGO PATH ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGO_PATH = os.path.join(BASE_DIR, "assets", "logo.png")
+BASE_DIR = Path(__file__).parent
+LOGO_PATH = BASE_DIR / "assets" / "logo.png"
 
+# Initialize session state
 if "data" not in st.session_state:
     st.session_state.data = pd.DataFrame()
 
-# --- THEME ADAPTIVE STYLING ---
+# --- THEME ADAPTIVE STYLING (ULTRA-COMPACT ONE-PAGE OPTIMIZED) ---
 def apply_styles():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
         
-        /* 1. ROOT VARIABLES: Theme switching logic */
         :root {
             --bg-card: #ffffff;
             --text-main: #1F3B4D;
-            --text-sub: #666666;
+            --text-sub: #64748B;
+            --border-color: #E2E8F0;
+            --sidebar-bg: linear-gradient(180deg, #102A43 0%, #061727 100%);
+            --sampath-orange: linear-gradient(135deg, #FF6600 0%, #FF8533 100%);
         }
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg-card: #1E1E1E;
-                --text-main: #E0E0E0;
-                --text-sub: #AAAAAA;
-                --border-color: #333333;
+                --bg-card: rgba(30, 30, 30, 0.6);
+                --text-main: #F8FAFC;
+                --text-sub: #94A3B8;
+                --border-color: rgba(255, 255, 255, 0.1);
             }
         }
 
-        /* 2. MAIN LAYOUT: Adaptive background & core typography */
+        /* 1. GLOBAL SPACE ELIMINATION */
         html, body, [data-testid="stAppViewContainer"] {
-            background-color: var(--background-color) !important;
-            color: var(--text-color) !important;
             font-family: 'Inter', sans-serif;
-            font-size: 0.9rem !important;
+            font-size: 0.85rem !important;
         }
 
         .block-container { 
-            padding-top: 3rem !important; 
-            padding-bottom: 1rem !important; 
-            max-width: 98% !important; 
+            padding-top: 1rem !important; /* Minimal top space */
+            padding-bottom: 0rem !important;
+            max-width: 99% !important; 
         }
 
-      /* ULTRA-COMPACT SIDEBAR WITH VISIBILITY FIX */
-        [data-testid="stSidebar"] {
-            background-image: linear-gradient(180deg, #102A43 0%, #061727 100%) !important;
+        /* Tightens the gap between every Streamlit widget */
+        [data-testid="stVerticalBlock"] {
+            gap: 0.25rem !important;
         }
 
-        /* Remove vertical bloat */
-        [data-testid="stSidebar"] .stVerticalBlock { gap: 0rem !important; }
-        [data-testid="stSidebar"] .block-container { padding: 0.5rem 0.8rem !important; }
+        /* 2. COMPACT HERO HEADER */
+        .hero-title {
+            font-size: 1.6rem !important; /* Smaller but bold */
+            font-weight: 800 !important;
+            background: var(--sampath-orange);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0 !important;
+            padding: 0 !important;
+            text-align: center;
+            text-transform: uppercase;
+        }
 
-        /* Shrink Logo and Pull Content Up */
+        .hero-subtitle {
+            color: var(--text-sub);
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-align: center;
+            margin-top: -5px !important;
+            margin-bottom: 10px !important;
+            opacity: 0.8;
+        }
+                
+        /* 1. TIGHTEN SIDEBAR TOP PADDING */
+        [data-testid="stSidebarContent"] {
+            padding-top: 0rem !important;
+        }
+
+        /* 2. REMOVE SPACING AROUND THE LOGO */
         [data-testid="stSidebar"] [data-testid="stImage"] {
-            margin-bottom: -35px !important;
-            transform: scale(0.8);
+            margin-top: -45px !important;    /* Pulls the logo up to the very top */
+            margin-bottom: -35px !important; /* Pulls the following content up toward the logo */
+            text-align: center;
+            display: flex;
+            justify-content: center;
         }
 
-        /* LABELS: Clear Visibility & No Overlap */
-        [data-testid="stSidebar"] label {
-            color: #F0F4F8 !important;
-            margin-bottom: 2px !important; 
-            margin-top: 8px !important;
+        /* 3. OPTIONAL: SCALE LOGO FOR BETTER FIT */
+        [data-testid="stSidebar"] [data-testid="stImage"] img {
+            max-width: 80% !important; /* Slightly smaller logo fits better in compact view */
+        }
+
+        /* 1. REFINED CRITICAL ALERT WITH MICRO-MARGINS */
+        .critical-alert-box {
+            animation: critical-glow 2s infinite;
+            padding: 3px 12px !important; 
+            border-radius: 20px;
+            border: 1px solid rgba(211, 47, 47, 0.4);
+            color: #D32F2F; 
+            font-weight: 600;
+            text-align: center; 
+            /* Added 8px top/bottom margin to separate from Sync text and Tabs */
+            margin: 8px auto !important; 
+            max-width: fit-content;
+            font-size: 0.75rem;
+            line-height: 1;
+            display: block;
+        }
+
+        /* 2. DE-CLUTTERING THE TAB ROW */
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            gap: 8px !important; 
+            /* Ensures space between the Alert pill and the Buttons */
+            margin-top: 4px !important; 
+            margin-bottom: 8px !important;
+        }
+
+        /* 3. SUBTLE SYNC TEXT SPACING */
+        /* Targets the 'Live Sync Active' text specifically */
+        .stMarkdown div p {
+            margin-bottom: 2px !important;
+        }
+
+        /* 4. BUTTON-SHAPED TABS (SHRUNK) */
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 5px !important; }
+        div[data-testid="stTabs"] button[data-baseweb="tab"] {
+            background-color: var(--bg-card) !important;
+            border: 1px solid var(--border-color) !important;
+            border-radius: 15px !important;
+            padding: 4px 12px !important;
             font-size: 0.75rem !important;
-            font-weight: 700 !important;
-            display: block !important;
-            text-transform: uppercase;
-        }
-
-        /* INPUTS: Force Visible Dark Text on White Background */
-        [data-testid="stSidebar"] div[data-baseweb="select"] > div,
-        [data-testid="stSidebar"] div[data-baseweb="base-input"] > input,
-        [data-testid="stSidebar"] div[data-baseweb="input"] > input {
-            min-height: 30px !important;
             height: 30px !important;
-            background-color: #FFFFFF !important;
-            border-radius: 4px !important;
-            padding-left: 10px !important;
-            /* Force text color for visibility */
-            color: #102A43 !important; 
-            -webkit-text-fill-color: #102A43 !important;
         }
 
-        /* Fix for visibility of selected options in dropdowns */
-        [data-testid="stSidebar"] [data-baseweb="select"] * {
-            color: #102A43 !important;
-        }
-
-        /* FILE UPLOADER: Minimalist */
-        [data-testid="stFileUploadDropzone"] { padding: 5px !important; }
-        [data-testid="stFileUploadDropzone"] div div { display: none !important; }
-
-        /* BUTTONS: Bold & Gradient */
-        [data-testid="stSidebar"] div.stButton > button {
-            min-height: 35px !important;
-            margin-top: 10px !important;
-            background: linear-gradient(135deg, #FF6600 0%, #FF8533 100%) !important;
-            font-weight: 700 !important;
-            color: white !important;
-            text-transform: uppercase;
-        }
-
-        /* 5. TABS & BUTTONS */
-        button[data-baseweb="tab"] {
-            background-color: transparent !important;
-            border: none !important;
-            color: var(--text-main) !important;
-            font-weight: 600 !important;
-            padding: 10px 20px !important;
-        }
-
-        button[data-baseweb="tab"][aria-selected="true"] {
-            color: #FF6600 !important;
-            border-bottom: 3px solid #FF6600 !important;
-        }
-
-        div.stButton > button:not([data-baseweb="tab"]) {
-            background-color: #FF6600 !important;
-            color: white !important;
-            border-radius: 6px !important;
-            border: none !important;
-            transition: 0.3s;
-            width: 100%;
-        }
-        
-        div.stButton > button:not([data-baseweb="tab"]):hover {
-            background-color: #e65c00 !important;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
-
-        /* 6. UI COMPONENTS: KPI Cards & Headers */
-        .header-box {
-            background: #FF6600; padding: 8px 16px; border-radius: 8px;
-            margin-bottom: 12px; color: white !important;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .header-box h2 { color: white !important; margin: 0; font-size: 1.1rem; font-weight: 700; }
-
+        /* 7. KPI METRIC CARDS (ROW SEPARATION FIX) */
         .kpi-wrapper {
-            background-color: var(--bg-card); 
-            padding: 10px 12px;
-            border-radius: 8px; 
-            margin-bottom: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            background: var(--bg-card);
+            padding: 4px 3px !important;
+            border-radius: 6px; 
             border: 1px solid var(--border-color); 
             text-align: center;
-        }
-        .kpi-label { font-size: 0.6rem; font-weight: 600; text-transform: uppercase; color: var(--text-sub); margin: 0; }
-        .kpi-value { font-size: 1rem; font-weight: 800; margin: 0; }
-
-        /* 7. ALERT BOX & ANIMATIONS */
-        @keyframes critical-glow {
-            0% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
-            50% { background-color: rgba(211, 47, 47, 0.35); border-color: rgba(211, 47, 47, 1); }
-            100% { background-color: rgba(211, 47, 47, 0.15); border-color: rgba(211, 47, 47, 0.5); }
+            height: 36px !important;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+            /* This forces space BELOW each card so the next row can't touch it */
+            margin-bottom: 15px !important; 
         }
 
-        .critical-alert-box {
-            animation: critical-glow 1.5s infinite;
-            padding: 15px; 
-            border-radius: 8px; 
-            border: 2px solid #D32F2F;
-            color: #D32F2F; 
+        /* Targets the Streamlit column gap specifically */
+        [data-testid="column"] {
+            padding-bottom: 10px !important;
+        }
+
+        /* Extra separation for the horizontal row containers */
+        [data-testid="stHorizontalBlock"] {
+            margin-bottom: 8px !important;
+            padding-top: 2px !important;
+        }
+
+        .kpi-label { 
+            font-size: 0.55rem !important; 
+            font-weight: 700; 
+            color: var(--text-sub); 
+            text-transform: uppercase;
+            margin-bottom: 1px !important;
+        }
+
+        .kpi-value { 
+            font-size: 1rem !important; 
             font-weight: 800; 
-            text-align: center; 
-            margin-bottom: 20px; 
-            font-size: 1.1rem;
+            color: var(--text-main); 
+            line-height: 0.5;
         }
-
-        @keyframes pulse-red-border {
-            0% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(211, 47, 47, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); }
-        }
-
-        .flashing-kpi {
-            animation: pulse-red-border 2s infinite;
-            border: 2px solid #D32F2F !important;
-        }
-
-        footer { visibility: hidden; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -301,167 +307,152 @@ def kpi_card(label, value, color="#FF6600", flash=False):
         </div>
     ''', unsafe_allow_html=True)
 
-# --- CORPORATE MAPPING ---
+import pandas as pd
+
 def get_parent_company(name):
     """
-    Collapses individual branches and subsidiaries into a single Parent Conglomerate.
+    Maps individual branches and subsidiaries into a single Parent Conglomerate.
     Uses 'Aggressive Keyword Detection' to catch typos and branches.
     """
-    if pd.isna(name): 
+    if pd.isna(name) or not str(name).strip():
         return "Unassigned"
     
-    # Standardize to uppercase and strip whitespace for matching
     n = str(name).strip().upper()
-    
-    # Mapping Dictionary: Key is the Parent Company, Value is a list of keywords
-    mappings = [
-        ("Hela Clothing", ["HELA", "INDIGLOW", "CLOTHIG"]),
-        ("Central Finance", ["CENTRAL FINANCE", "CF ", "CF-", "CF"]),
-        ("Commercial Bank", ["COMMERCIAL BANK", "COMBANK", "CBC "]),
-        ("Sampath Bank", ["SAMPATH"]),
-        ("Hatton National Bank", ["HATTON NATIONAL", "HNB"]),
-        ("Seylan Bank", ["SEYLAN"]),
-        ("Nations Trust Bank", ["NATIONS TRUST", " NTB"]),
-        ("Pan Asia Bank", ["PAN ASIA"]),
-        ("DFCC Bank", ["DFCC"]),
-        ("John Keells Group", ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"]),
-        ("Hayleys Group", ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"]),
-        ("LOLC / Browns Group", ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"]),
-        ("Vallibel One", ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"]),
-        ("Cargills Group", ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"]),
-        ("Gamma Pizzakraft", ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"]),
-        ("Abans Group", ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"]),
-        ("Softlogic", ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"]),
-        ("Hemas Holdings", ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"]),
-        ("MAS Holdings", ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"]),
-        ("Brandix", ["BRANDIX", "FORTUDE"]),
-        ("SITS Internal", ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"]),
-        ("IWS", [
-            "SWEDISH CARS", "PURE CEYLON BEVARAGE", "IWS LOGISTICS", 
-            "WINDCASTLE", "ART TV", "GERMANIA", "IWS HOLDINGS", 
-            "IWS INVESTEMENTS", "IWS AUTOMOBILES", "DYNACOM ELECTRONICS", "EUROCARS"
-        ])
-    ]
 
-    # Iterative keyword matching
-    for parent, keywords in mappings:
-        if any(kw in n for kw in keywords):
+    # Parent-to-keywords mapping
+    mappings = {
+        "Hela Clothing": ["HELA", "INDIGLOW", "CLOTHIG"],
+        "Central Finance": ["CENTRAL FINANCE", "CF ", "CF-", "CF"],
+        "Commercial Bank": ["COMMERCIAL BANK", "COMBANK", "CBC "],
+        "Sampath Bank": ["SAMPATH"],
+        "Hatton National Bank": ["HATTON NATIONAL", "HNB"],
+        "Seylan Bank": ["SEYLAN"],
+        "Nations Trust Bank": ["NATIONS TRUST", " NTB"],
+        "Pan Asia Bank": ["PAN ASIA"],
+        "DFCC Bank": ["DFCC"],
+        "John Keells Group": ["JKH", "KELLS", "CINNAMON", "ELEPHANT HOUSE", "UNION ASSURANCE", "WALKERS TOURS"],
+        "Hayleys Group": ["HAYLEYS", "ADVANTIS", "SINGER", "KINGSBURY", "DIPPED PRODUCTS", "ALUMEX", "FENTONS", "HAYCARB", "AMAYA"],
+        "LOLC / Browns Group": ["LOLC", "BROWNS", "EDEN RESORT", "DICKWEYA", "AGSTAR", "MATURATA"],
+        "Vallibel One": ["LB FINANCE", "ROYAL CERAMICS", "ROCELL", "LANKA TILES", "LANKA WALLTILES", "SWISSTEK", "DELMEGE"],
+        "Cargills Group": ["CARGILLS", "FOOD CITY", "KFC", "K.F.C", "KIST", "KOTMALE"],
+        "Gamma Pizzakraft": ["PIZZA HUT", "PIZZAHUT", "TACO BELL", "TACOBELL", "GAMMA PIZZA", "PIZZAKRAFT"],
+        "Abans Group": ["ABANS", "COLOMBO CITY CENTRE", "CCC", "MINISO", "MCDONALDS"],
+        "Softlogic": ["SOFTLOGIC", "ASIRI", "GLOMARK", "ODEL", "SKECHERS", "BURGER KING"],
+        "Hemas Holdings": ["HEMAS", "ATLAS", "MORISON", "J.L. MORISON"],
+        "MAS Holdings": ["MAS HOLDINGS", "MAS ACTIVE", "MAS FABRICS", "BODYLINE", "SLIMLINE"],
+        "Brandix": ["BRANDIX", "FORTUDE"],
+        "SITS Internal": ["SITS", "SYNERGY", "SMART INFRASTRUCTURE"],
+        "IWS": ["SWEDISH CARS", "PURE CEYLON BEVARAGE", "IWS LOGISTICS", 
+                "WINDCASTLE", "ART TV", "GERMANIA", "IWS HOLDINGS", 
+                "IWS INVESTEMENTS", "IWS AUTOMOBILES", "DYNACOM ELECTRONICS", "EUROCARS"]
+    }
+
+    # Convert all keywords to uppercase once
+    for parent, keywords in mappings.items():
+        keywords_upper = [kw.upper() for kw in keywords]
+        if any(kw in n for kw in keywords_upper):
             return parent
-            
-    # Return original name if no keyword matches
+
     return str(name).strip()
 
-# --- TECHNICIAN TEAM MAPPING ---
 def get_team_from_technician(name):
-    # Standardize input for better matching
-    name = str(name).strip()
-    
-    sits_support = [
-        "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
-        "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
-        "Nirantha Madhushanka", "Kavinda Nethmal", "Heshan Lakshitha", "Sanath Manjula",
-        "Nadeesh Madhushan", "H.D.P Pradeep", "Dilan Madhawa", "SITS IT Support",
-        "Sayanthan Rasalinkam", "Malmi Nandasiri", "Uthayananthan Thanushanth",
-        "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
-        "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
-        "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
-        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna", 
-        "Rusith Tharanga Silva", "Duminda Dayasiri"
-    ]
-    gamma_it = [
-        "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
-        "Preshan Silva", "Kavindu Basilu", "Nimna Mendis", "Janindu Hewaalankarage",
-        "Hasitha Munasinghe", "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan",
-        "Hashan Madushanka"
-    ]
-    service_desk = [
-        "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
-        "Sasanka Madusith", "Ositha Buddika"
-    ]
-    
-    # ADDED: Software Dept Members
-    software_dept = [
-        "Software Support", "Dev Team", "Application Support" 
-        # Add specific software personnel names here
-    ]
-    
-# ADDED: Enterprise Team Members
-    enterprise_team = [
-        "Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"
-    ]
+    """
+    Maps a technician's full name to their corresponding team.
+    Returns 'Unassigned' if the technician is not in any predefined team.
+    """
+    if pd.isna(name) or not str(name).strip():
+        return "Unassigned"
 
-    # Mapping Logic: Matches names to specific Operational Units
-    if name in sits_support: return "SITS IT Support"
-    if name in gamma_it: return "Gamma IT"
-    if name in service_desk: return "Service Desk"
-    if name in software_dept: return "Software Dept"
-    if name in enterprise_team: return "Enterprise Team"
-    
-    # Returning Unassigned allows you to see names that aren't mapped yet
+    name = str(name).strip()
+
+    # Dictionary mapping team name -> list of technicians
+    teams = {
+        "SITS IT Support": [
+            "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
+            "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
+            "Nirantha Madhushanka", "Kavinda Nethmal", "Heshan Lakshitha", "Sanath Manjula",
+            "Nadeesh Madhushan", "H.D.P Pradeep", "Dilan Madhawa", "SITS IT Support",
+            "Sayanthan Rasalinkam", "Malmi Nandasiri", "Uthayananthan Thanushanth",
+            "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
+            "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
+            "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
+            "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna",
+            "Rusith Tharanga Silva", "Duminda Dayasiri"
+        ],
+        "Gamma IT": [
+            "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
+            "Preshan Silva", "Kavindu Basilu", "Nimna Mendis", "Janindu Hewaalankarage",
+            "Hasitha Munasinghe", "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan",
+            "Hashan Madushanka"
+        ],
+        "Service Desk": [
+            "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
+            "Sasanka Madusith", "Ositha Buddika"
+        ],
+        "Software Dept": [
+            "Software Support", "Dev Team", "Application Support"
+            # Add more names if needed
+        ],
+        "Enterprise Team": [
+            "Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"
+        ]
+    }
+
+    # Iterate over dictionary to find team
+    for team_name, members in teams.items():
+        if name in members:
+            return team_name
+
     return "Unassigned"
 
+# --- 5. DATA PROCESSING ---
 def process_data_safely(df):
-    if df is None or df.empty: return pd.DataFrame()
-    df = df.copy()
-    
-    # 1. Clean column headers
-    df.columns = [str(c).strip() for c in df.columns]
-    
-    # 2. Dynamic Column Identification
-    tto_col = next((c for c in ['SLA tto passed', 'TTO passed', 'SLA tto p'] if c in df.columns), None)
-    ttr_col = next((c for c in ['SLA ttr passed', 'TTR passed', 'SLA ttr p'] if c in df.columns), None)
-    a_col = next((c for c in ['Agent->Full name', 'Agent', 'Agent Name'] if c in df.columns), None)
-    c_col = next((c for c in ['Organization->Name', 'Organization', 'Organization Name'] if c in df.columns), None)
-    
-    # 3. SLA Standardization (Checks for 'no', 'met', or 'within sla')
-    def check_sla(val):
-        v = str(val).strip().lower()
-        return 1 if v in ['no', 'met', 'within sla', 'achieved', 'yes'] else 0
+    if df is None or df.empty:
+        return pd.DataFrame()
 
-    df['TTO_Done'] = df[tto_col].apply(check_sla) if tto_col else 0
-    df['TTR_Done'] = df[ttr_col].apply(check_sla) if ttr_col else 0
-    
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # --- UPDATED MAPPING TO MATCH SYNC SCRIPT ---
+    col_map = {
+        "tto": next((c for c in df.columns if 'TTO' in c.upper()), None),
+        "ttr": next((c for c in df.columns if 'TTR' in c.upper()), None),
+        "agent": 'Agent' if 'Agent' in df.columns else None,
+        "company": 'Customer' if 'Customer' in df.columns else None,
+        "start_date": 'Start Date' if 'Start Date' in df.columns else None,
+    }
+
+    # 3. SLA Standardization (Simple 1/0 check)
+    def check_sla(val):
+        return 1 if val == 1 else 0
+
+    if col_map['tto']: df['TTO_Done'] = df[col_map['tto']].apply(check_sla)
+    if col_map['ttr']: df['TTR_Done'] = df[col_map['ttr']].apply(check_sla)
+
     # 4. Date & Status Handling
-    if 'Start date' in df.columns:
-        df['Start date'] = pd.to_datetime(df['Start date'], errors='coerce')
-        
-    if 'Status' in df.columns:
-        df['Status_Clean'] = df['Status'].astype(str).str.strip().str.lower()
-        df['Is_Pending'] = (df['Status_Clean'] == 'pending').astype(int)
-        df['Is_Closed'] = (df['Status_Clean'] == 'closed').astype(int)
-    
-    # 5. Mapped Team Logic (The Fix for Operational Units)
-    if a_col:
-        # Assign the team based on the technician name
-        df['Mapped_Team'] = df[a_col].apply(get_team_from_technician)
-    else:
-        df['Mapped_Team'] = "Unassigned"
-        
-    # 6. Company Mapping
-    if c_col:
-        df['Parent_Company'] = df[c_col].apply(get_parent_company)
-    else:
-        df['Parent_Company'] = "Internal"
-    
-    # 7. Final Cleanup: Ensure no NaN values in filtering columns
-    df['Mapped_Team'] = df['Mapped_Team'].fillna('Unassigned')
-    df['Parent_Company'] = df['Parent_Company'].fillna('Internal')
-    
-    if 'Ref' not in df.columns: 
-        df['Ref'] = range(len(df))
-        
+    if col_map['start_date']:
+        df['Start Date'] = pd.to_datetime(df[col_map['start_date']], errors='coerce')
+
+    # 5. Mappings
+    df['Mapped_Team'] = df['Agent'].apply(get_team_from_technician) if 'Agent' in df.columns else 'Unassigned'
+    df['Parent_Company'] = df['Customer'].apply(get_parent_company) if 'Customer' in df.columns else 'Unassigned'
+
     return df
 
-# --- 1. INITIALIZATION ---
+# --- 6. STREAMLIT SESSION INITIALIZATION ---
 def initialize_session():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "user_role" not in st.session_state:
-        st.session_state.user_role = None
-    if "username" not in st.session_state:
-        st.session_state.username = None
-    if "data" not in st.session_state:
-        st.session_state.data = pd.DataFrame()
+    """Ensures essential session state variables exist"""
+    session_defaults = {
+        "authenticated": False,
+        "user_role": None,
+        "username": None,
+        "data": pd.DataFrame(),
+        "last_updated": None
+    }
+
+    for key, default in session_defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default
 
 initialize_session()
 
@@ -478,14 +469,6 @@ def logout():
     st.session_state.username = None
     st.session_state.data = pd.DataFrame()
     st.rerun()
-
-import streamlit as st
-import pandas as pd
-import os
-import base64
-from io import BytesIO
-import requests
-from sqlalchemy import text
 
 # --- 2. LOGIN UI ---
 if not st.session_state.authenticated:
@@ -612,7 +595,6 @@ if st.session_state.data.empty:
 
 # --- 5. DASHBOARD CODE STARTS BELOW ---
 
-# Using a small, styled header instead of st.title
 st.markdown(f"""
     <div style='padding: 10px; border-radius: 5px; background-color: #f0f2f6; margin-bottom: 20px;'>
         <p style='margin: 0; font-size: 0.9rem; color: #666; font-weight: bold;'>
@@ -621,360 +603,395 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Your analytics charts and tables go here...
-
-# --- DATA PREP ---
-df_base = st.session_state.data.copy()
-org_col = next((c for c in ['Organization->Name', 'Organization'] if c in df_base.columns), "Organization")
-a_col = next((c for c in ['Agent->Full name', 'Agent'] if c in df_base.columns), "Agent")
-pr_col = next((c for c in ['Pending reason', 'Reason', 'Pending Reason'] if c in df_base.columns), None)
-t_col = 'Mapped_Team'
-
-# --- SIDEBAR ---
+# --- FIXED SIDEBAR ---
 with st.sidebar:
-    if os.path.exists(LOGO_PATH): 
+    # Logo
+    if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=180)
-        
-    st.markdown("### DATA MANAGEMENT")
-    new_data = st.file_uploader("Update SQL Database", type=['xlsx', 'csv'])
-    if new_data:
-        df_new = pd.read_csv(new_data, encoding='latin1') if new_data.name.endswith('.csv') else pd.read_excel(new_data)
-        processed_new = process_data_safely(df_new) 
-        save_to_db(processed_new)
-        st.session_state.data = processed_new
-        st.rerun()
     
     st.markdown("---")
     st.markdown("### FILTERS")
-
-    # 1. Date Filter Logic - Restoring the From/To Selectors
-    # Dynamically find date column to prevent KeyErrors
+    
+    # --- DATA COPY ---
+    df_base = st.session_state.data.copy()
+    
+    # --- DATE FILTER ---
     d_col = next((c for c in df_base.columns if 'start' in c.lower() or 'fixed' in c.lower()), None)
-    selected_dates = []
-
-    if d_col:
+    if d_col and not df_base.empty:
         valid_dates = pd.to_datetime(df_base[d_col], errors='coerce').dropna()
         if not valid_dates.empty:
             min_date, max_date = valid_dates.min().date(), valid_dates.max().date()
-            
-            # SIDE-BY-SIDE DATE PICKERS
             col_f, col_t = st.columns(2)
             with col_f:
                 date_from = st.date_input("From Date", value=min_date, min_value=min_date, max_value=max_date, key="sidebar_from")
             with col_t:
                 date_to = st.date_input("To Date", value=max_date, min_value=min_date, max_value=max_date, key="sidebar_to")
-            
             selected_dates = [date_from, date_to]
-
-    # 2. Operational Unit (Hard-cleaning "Unassigned" out of the UI)
+        else:
+            selected_dates = []
+    else:
+        selected_dates = []
+    
+    # --- OPERATIONAL UNIT FILTER ---
     if 'Mapped_Team' in df_base.columns:
-        # Get unique teams and remove any variants of Unassigned/NaN
-        raw_teams = df_base['Mapped_Team'].unique().tolist()
-        available_teams = [
-            t for t in raw_teams 
-            if str(t).strip().lower() not in ['unassigned', 'nan', 'none', '']
-        ]
+        raw_teams = df_base['Mapped_Team'].dropna().unique().tolist()
+        available_teams = [t for t in raw_teams if str(t).strip().lower() not in ['unassigned', 'nan', 'none', '']]
         unit_options = ["All Departments"] + sorted(available_teams)
     else:
-        unit_options = ["All Departments", "Software Dept", "Enterprise Team", "Service Desk"]
-    
+        unit_options = ["All Departments"]
     selected_unit = st.selectbox("Operational Unit", unit_options)
     
-    # 3. Customer Filter
-    all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
+    # --- CUSTOMER FILTER ---
+    if 'Parent_Company' in df_base.columns:
+        all_parents_list = sorted(df_base['Parent_Company'].dropna().unique().tolist())
+    else:
+        all_parents_list = []
     all_parents_options = ["All Customers"] + all_parents_list
     selected_org = st.selectbox("Select Customer", all_parents_options)
     
-    st.markdown("### EXCLUSIONS")
+    # --- EXCLUSIONS ---
     excluded_orgs = st.multiselect("Exclude Organizations", all_parents_list)
     
-    # 4. Agent Exclusions
-    all_agents = sorted(df_base[a_col].dropna().unique().tolist()) if a_col in df_base.columns else []
+    # --- AGENT EXCLUSIONS ---
+    agent_col = next((c for c in df_base.columns if 'agent' in c.lower() or 'full name' in c.lower()), None)
+    all_agents = sorted(df_base[agent_col].dropna().unique().tolist()) if agent_col else []
     excluded_agents = st.multiselect("Exclude Agents", all_agents)
     
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("LOGOUT SESSION", use_container_width=True):
         st.session_state.data = pd.DataFrame()
-        st.rerun()
+        st.experimental_rerun()
 
 # --- 5. DASHBOARD FILTERING LOGIC ---
+# --- 6. FINAL RENDER ---
+# We check if the 'df' variable (the one we filtered in Section 5) has data
+if not df.empty:
+    # This is the "Bridge" - passing the FILTERED data to the UI function
+    render_dashboard_content(df)
+else:
+    # If filters are too strict (e.g. no records for that date), show this:
+    st.info("Below records are found to matching the current sidebar filters.")
 
-# 1. INITIALIZE VARIABLES (Crucial to prevent NameErrors)
-df = pd.DataFrame()
+df = st.session_state.data.copy() if not st.session_state.data.empty else pd.DataFrame()
 df_pending = pd.DataFrame()
 df_aged = pd.DataFrame()
 backlog_val = 0
 aged_count = 0
 
-# Ensure selected_dates exists even if the sidebar logic was skipped
-if 'selected_dates' not in locals():
-    selected_dates = None
+# Ensure selected_dates exists
+selected_dates = selected_dates if 'selected_dates' in locals() else None
 
-if not st.session_state.data.empty:
-    df = st.session_state.data.copy()
-
-# 2. DATE RANGE FILTER
-    if selected_dates and len(selected_dates) == 2:
+if not df.empty:
+    # --- DATE FILTER ---
+    date_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
+    if date_col and selected_dates and len(selected_dates) == 2:
         try:
-            # Step 1: Find the actual column name in the data (Start Date, Start date, start date, etc.)
-            actual_date_col = next((c for c in df.columns if c.lower() == 'start date'), None)
-
-            if actual_date_col:
-                # Step 2: Convert the found column to datetime
-                df[actual_date_col] = pd.to_datetime(df[actual_date_col], errors='coerce')
-                
-                # Step 3: Filter using the date components
-                # We use .dt.date to compare exactly with the streamlit date_input objects
-                start_val, end_val = selected_dates[0], selected_dates[1]
-                
-                mask = (df[actual_date_col].dt.date >= start_val) & \
-                       (df[actual_date_col].dt.date <= end_val)
-                
-                df = df.loc[mask].copy()
-            else:
-                st.warning("Date Filter: No column matching 'Start Date' found in the database.")
-                
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            start_val, end_val = selected_dates
+            mask = (df[date_col].dt.date >= start_val) & (df[date_col].dt.date <= end_val)
+            df = df.loc[mask].copy()
         except Exception as e:
-            # This will now show you exactly what went wrong if it fails again
             st.error(f"Date Filter Error: {e}")
 
-    # 3. CUSTOMER FILTER
-    if 'selected_org' in locals() and selected_org != "All Customers":
+    # --- CUSTOMER FILTER ---
+    if 'selected_org' in locals() and selected_org != "All Customers" and 'Parent_Company' in df.columns:
         df = df[df['Parent_Company'] == selected_org]
 
-    # 4. UNIT FILTER
-    if 'selected_unit' in locals() and selected_unit != "All Departments": 
-        team_col = 'Mapped_Team'
-        if team_col in df.columns:
-            df = df[df[team_col] == selected_unit]
+    # --- UNIT FILTER ---
+    if 'selected_unit' in locals() and selected_unit != "All Departments" and 'Mapped_Team' in df.columns:
+        df = df[df['Mapped_Team'] == selected_unit]
 
-    # 5. EXCLUSIONS
-    if 'excluded_orgs' in locals() and excluded_orgs:
+    # --- EXCLUSIONS ---
+    if 'excluded_orgs' in locals() and excluded_orgs and 'Parent_Company' in df.columns:
         df = df[~df['Parent_Company'].isin(excluded_orgs)]
 
     if 'excluded_agents' in locals() and excluded_agents and a_col in df.columns:
         df = df[~df[a_col].isin(excluded_agents)]
 
-    # 6. STATUS & AGED LOGIC
-    # Using a fixed reference for "now" to keep calculations consistent
+    # --- STATUS & AGED LOGIC ---
     now = datetime.now()
     one_month_ago = now - timedelta(days=30)
 
-    if 'Status' in df.columns:
-        # Clean status for reliable filtering
-        status_clean = df['Status'].astype(str).str.strip().str.lower()
-        df_pending = df[status_clean == 'pending'].copy()
-        
-        # --- 6. STATUS & AGED LOGIC ---
-now = datetime.now()
-one_month_ago = now - timedelta(days=30)
+    if 'Status' in df.columns and date_col:
+        df['Status_Clean'] = df['Status'].astype(str).str.strip().str.lower()
+        df_pending = df[df['Status_Clean'] == 'pending'].copy()
 
-# 1. Dynamically find the Start Date column to avoid KeyError
-# We look for common variations of the name
-date_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
+        if not df_pending.empty:
+            df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce')
+            
+            # Handle timezone-naive conversion safely
+            if df_pending[date_col].dt.tz is not None:
+                temp_dates = df_pending[date_col].dt.tz_localize(None)
+            else:
+                temp_dates = df_pending[date_col]
 
-if 'Status' in df.columns and date_col:
-    # Normalize status for filtering
-    status_clean = df['Status'].astype(str).str.strip().str.lower()
-    df_pending = df[status_clean == 'pending'].copy()
+            df_aged = df_pending[temp_dates < one_month_ago].copy()
+        else:
+            df_aged = pd.DataFrame()
+
+        backlog_val = len(df_pending)
+        aged_count = len(df_aged)
+    else:
+        backlog_val = 0
+        aged_count = 0
+        if not date_col:
+            st.warning("Could not find a 'Start Date' column in the data.")
+
+    # --- 2. CALCULATE METRICS (ALIGNED WITH SYNC SCRIPT) ---
+    total_v = len(df)
     
-    df_aged = pd.DataFrame()
-
-    if not df_pending.empty:
-        # Use the dynamically found date_col instead of hardcoded 'Start date'
-        df_pending[date_col] = pd.to_datetime(df_pending[date_col], errors='coerce')
-        
-        # Ensure comparison is possible by removing timezones (tz-naive)
-        temp_dates = df_pending[date_col].dt.tz_localize(None)
-        df_aged = df_pending[temp_dates < one_month_ago]
+    # Identify key columns safely
+    sd_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), 'Start Date')
+    org_col_name = next((c for c in df.columns if 'customer' in c.lower() or 'organization' in c.lower()), 'Customer')
+    
+    # Filter for Backlog and Aged tickets
+    status_col = 'Status' if 'Status' in df.columns else None
+    completed_statuses = ['resolved', 'closed', 'completed', 'done']
+    
+    if status_col:
+        df_pending = df[~df[status_col].astype(str).str.lower().isin(completed_statuses)].copy()
+    else:
+        df_pending = pd.DataFrame()
 
     backlog_val = len(df_pending)
-    aged_count = len(df_aged)
-else:
-    # Fallback if columns are missing
-    backlog_val = 0
+    
+    # Calculate Aged Tickets (>30 days)
     aged_count = 0
-    if not date_col:
-        st.warning("Could not find a 'Start Date' column in the data.")
+    if not df_pending.empty and sd_col in df_pending.columns:
+        df_pending[sd_col] = pd.to_datetime(df_pending[sd_col], errors='coerce')
+        now = pd.Timestamp.now()
+        df_aged = df_pending[(now - df_pending[sd_col]).dt.days > 30]
+        aged_count = len(df_aged)
+    else:
+        df_aged = pd.DataFrame()
 
-# --- SLA CALCULATIONS ---
-total_v = len(df)
+    # SLA Calculations from sync script columns (1 = Met, 0 = Breach)
+    tto_met_count = int(df['TTO MET'].sum()) if 'TTO MET' in df.columns else 0
+    ttr_met_count = int(df['TTR MET'].sum()) if 'TTR MET' in df.columns else 0
 
-# Use the columns created by master_data_sync.py to show real-time breaches
-tto_met_count = int(df['TTO MET'].sum()) if 'TTO MET' in df.columns else 0
-ttr_met_count = int(df['TTR MET'].sum()) if 'TTR MET' in df.columns else 0
+    tto_breach_count = total_v - tto_met_count
+    ttr_breach_count = total_v - ttr_met_count
 
-# Breaches are the remaining tickets from the total volume
-tto_breach_count = total_v - tto_met_count
-ttr_breach_count = total_v - ttr_met_count
+    tto_perf_pct = (tto_met_count / total_v * 100) if total_v > 0 else 0
+    ttr_perf_pct = (ttr_met_count / total_v * 100) if total_v > 0 else 0
+    
+    tto_breach_pct = 100 - tto_perf_pct
+    ttr_breach_pct = 100 - ttr_perf_pct
 
-# Calculate real-time percentages
-tto_perf_pct = (tto_met_count / total_v * 100) if total_v > 0 else 0
-ttr_perf_pct = (ttr_met_count / total_v * 100) if total_v > 0 else 0
-tto_breach_pct = 100 - tto_perf_pct if total_v > 0 else 0
-ttr_breach_pct = 100 - ttr_perf_pct if total_v > 0 else 0
+    # --- 3. MAIN INTERFACE & TABS ---
+    if aged_count > 0:
+        st.markdown(f'<div class="critical-alert-box">⚠️ CRITICAL ALERT: {aged_count} Pending tickets have been open for more than 30 days!</div>', unsafe_allow_html=True)
 
-# --- MAIN INTERFACE ---
-if aged_count > 0:
-    st.markdown(f'<div class="critical-alert-box">⚠️ CRITICAL ALERT: {aged_count} Pending tickets have been open for more than 30 days!</div>', unsafe_allow_html=True)
-
-st.markdown(f'<div class="header-box"><h2>CXP ANALYTICS: {selected_unit.upper()}</h2></div>', unsafe_allow_html=True)
-
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Main Dashboard", "Personnel Performance", "Group Hierarchy", "Executive Report", "Audit History"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Main Dashboard", "Personnel Performance", "Group Hierarchy", "Executive Report", "Audit History"])
 
 # --- TAB 1: MAIN DASHBOARD ---
-with tab1:
-    st.markdown('<span class="section-header">Performance & Breach Overview</span>', unsafe_allow_html=True)
-    
-    # 1. TTO & TTR Metrics Rows
-    st.markdown("#### TTO Metrics")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi_card("TTO PERF %", f"{tto_perf_pct:.1f}%", color="#2E7D32" if tto_perf_pct >= 90 else "#FF6600")
-    with c2: kpi_card("TTO MET", f"{tto_met_count}", color="#2E7D32")
-    with c3: kpi_card("TTO BREACH %", f"{tto_breach_pct:.1f}%", color="#D32F2F")
-    with c4: kpi_card("TTO BREACH", tto_breach_count, color="#D32F2F")
+    with tab1:
+        import plotly.graph_objects as go
+        import pandas as pd
+        from datetime import datetime
 
-    st.markdown("#### TTR Metrics")
-    c5, c6, c7, c8 = st.columns(4)
-    with c5: kpi_card("TTR PERF %", f"{ttr_perf_pct:.1f}%", color="#2E7D32" if ttr_perf_pct >= 90 else "#FF6600")
-    with c6: kpi_card("TTR MET", f"{ttr_met_count}", color="#2E7D32")
-    with c7: kpi_card("TTR BREACH %", f"{ttr_breach_pct:.1f}%", color="#D32F2F")
-    with c8: kpi_card("TTR BREACH", ttr_breach_count, color="#D32F2F")
+        # --- 1. PERFORMANCE GAUGES SECTION ---
+        st.markdown("### Operational Performance Health")
+        
+        # Calculate Overall Met/Breach
+        overall_met = tto_met_count + ttr_met_count
+        overall_breach = tto_breach_count + ttr_breach_count
+        total_sla_points = overall_met + overall_breach
+        overall_perf_rate = (overall_met / total_sla_points * 100) if total_sla_points > 0 else 0
 
-    # 2. Overall Metrics Row
-    st.write("### Overall Metrics")
-    c9, c10, c11 = st.columns(3)
-    with c9: kpi_card("TOTAL VOLUME", total_v, color="#1F3B4D")
-    with c10: kpi_card("TOTAL BACKLOG", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
-    with c11: kpi_card("AGED (>30 DAYS)", aged_count, color="#7B1FA2")
+        # Helper function for Gauge Charts
+        def create_gauge(title, value, color):
+            fig = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = value,
+                number = {'suffix': "%", 'font': {'size': 26, 'color': '#1F3B4D'}},
+                title = {'text': title, 'font': {'size': 18, 'color': '#1F3B4D'}},
+                gauge = {
+                    'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#1F3B4D"},
+                    'bar': {'color': color},
+                    'bgcolor': "white",
+                    'borderwidth': 1,
+                    'bordercolor': "#eeeeee",
+                    'steps': [
+                        {'range': [0, 75], 'color': '#fde8e8'},
+                        {'range': [75, 90], 'color': '#fef9e7'},
+                        {'range': [90, 100], 'color': '#e8f5e9'}
+                    ],
+                    'threshold': {
+                        'line': {'color': "black", 'width': 3},
+                        'thickness': 0.75,
+                        'value': 95 
+                    }
+                }
+            ))
+            fig.update_layout(height=220, margin=dict(t=40, b=0, l=30, r=30), paper_bgcolor='rgba(0,0,0,0)')
+            return fig
 
-    # Dynamic Status Row (PENDING, ASSIGNED, etc.)
-    if 'Status' in df.columns:
-        status_counts = df['Status'].value_counts()
-        stat_cols = st.columns(len(status_counts))
-        for i, (name, count) in enumerate(status_counts.items()):
-            with stat_cols[i]:
-                kpi_card(name.upper(), count, color="#FF6600")
+        # Display 3 Gauges side-by-side
+        g1, g2, g3 = st.columns(3)
+        with g1:
+            st.plotly_chart(create_gauge("OVERALL PERFORMANCE", overall_perf_rate, "#1F3B4D"), use_container_width=True)
+        with g2:
+            st.plotly_chart(create_gauge("TTO PERFORMANCE", tto_perf_pct, "#2E7D32"), use_container_width=True)
+        with g3:
+            st.plotly_chart(create_gauge("TTR PERFORMANCE", ttr_perf_pct, "#FF6600"), use_container_width=True)
 
-    # --- SAFETY CHECK FOR COLUMN NAMES ---
-    # This finds 'Start date' even if it is named 'Start Date ' or 'start_date'
-    sd_col = next((c for c in df.columns if 'start' in c.lower() and 'date' in c.lower()), None)
-    org_col_name = next((c for c in df.columns if 'organization' in c.lower()), 'Organization Name')
+        # --- NEW: IMPROVED LAST 3 MONTHS PERFORMANCE TABLE (WITH TTO/TTR) ---
+        st.markdown("#### Monthly Performance Breakdown")
+        if sd_col in df.columns:
+            df_m = df.copy()
+            df_m[sd_col] = pd.to_datetime(df_m[sd_col], errors='coerce')
+            df_m = df_m.dropna(subset=[sd_col])
+            df_m['Month'] = df_m[sd_col].dt.strftime('%b %Y')
+            df_m['Month_Sort'] = df_m[sd_col].dt.to_period('M')
 
-    # 3. Detailed Ticket Breakdown
-    st.markdown('<span class="section-header">Detailed Ticket Breakdown</span>', unsafe_allow_html=True)
-    
-    available_cols = [c for c in ['Ref', 'Title', sd_col, 'Agent', org_col_name, 'Pending reason'] if c and c in df.columns]
-    
-    col_p, col_a = st.columns(2)
-    with col_p:
-        st.subheader("Pending Tickets")
-        if not df_pending.empty and sd_col:
-            temp_p = df_pending.copy()
-            # Force conversion to datetime and then format as string with Time
-            temp_p[sd_col] = pd.to_datetime(temp_p[sd_col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
-            st.dataframe(temp_p[available_cols], use_container_width=True, hide_index=True)
+            # Detailed Monthly Aggregation
+            def calc_monthly(x):
+                tto_m_total = len(x)
+                tto_m_breach = x['TTO_Done'].sum() if 'TTO_Done' in x.columns else 0
+                ttr_m_total = len(x[x['Status'] == 'Resolved']) # Only resolved tickets count for TTR
+                ttr_m_breach = x['TTR_Done'].sum() if 'TTR_Done' in x.columns else 0
+                
+                return pd.Series({
+                    'Volume': len(x),
+                    'TTO Perf %': ((tto_m_total - tto_m_breach) / tto_m_total * 100) if tto_m_total > 0 else 0,
+                    'TTR Perf %': ((ttr_m_total - ttr_m_breach) / ttr_m_total * 100) if ttr_m_total > 0 else 0,
+                    'Overall %': (((tto_m_total + ttr_m_total) - (tto_m_breach + ttr_m_breach)) / (tto_m_total + ttr_m_total) * 100) if (tto_m_total + ttr_m_total) > 0 else 0
+                })
+
+            monthly_perf = df_m.groupby(['Month_Sort', 'Month']).apply(calc_monthly).reset_index()
+            monthly_perf = monthly_perf.sort_values('Month_Sort', ascending=False).head(3)
+
+            # Styling logic for text colors based on 95% Target
+            def color_sla(val):
+                color = '#2E7D32' if val >= 95 else '#FF6600' if val >= 85 else '#D32F2F'
+                return f'color: {color}; font-weight: bold'
+
+            # Display the enhanced table
+            st.dataframe(
+                monthly_perf[['Month', 'Volume', 'TTO Perf %', 'TTR Perf %', 'Overall %']].style
+                .format({'TTO Perf %': '{:.1f}%', 'TTR Perf %': '{:.1f}%', 'Overall %': '{:.1f}%'})
+                .applymap(color_sla, subset=['TTO Perf %', 'TTR Perf %', 'Overall %']),
+                use_container_width=True, hide_index=True
+            )
         else:
-            st.info("No pending tickets or missing date column.")
+            st.info("Start Date column missing for trend analysis.")
+
+        st.divider()
+
+        # --- 2. DETAILED KPI CARDS (TTO & TTR) ---
+        st.markdown("#### Time To Own (TTO) Metrics")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: kpi_card("TTO PERFORMANCE %", f"{tto_perf_pct:.1f}%", color="#2E7D32" if tto_perf_pct >= 90 else "#FF6600")
+        with c2: kpi_card("TTO MET", f"{tto_met_count}", color="#2E7D32")
+        with c3: kpi_card("TTO BREACH %", f"{tto_breach_pct:.1f}%", color="#D32F2F")
+        with c4: kpi_card("TTO BREACH", tto_breach_count, color="#D32F2F")
+
+        st.markdown("#### Time To Resolve (TTR) Metrics")
+        c5, c6, c7, c8 = st.columns(4)
+        with c5: kpi_card("TTR PERFORMANCE %", f"{ttr_perf_pct:.1f}%", color="#2E7D32" if ttr_perf_pct >= 90 else "#FF6600")
+        with c6: kpi_card("TTR MET", f"{ttr_met_count}", color="#2E7D32")
+        with c7: kpi_card("TTR BREACH %", f"{ttr_breach_pct:.1f}%", color="#D32F2F")
+        with c8: kpi_card("TTR BREACH", ttr_breach_count, color="#D32F2F")
+
+        # --- 3. VOLUME & STATUS METRICS ---
+        st.write("### Overall Volume & Status")
+        c9, c10, c11 = st.columns(3)
+        with c9: kpi_card("TOTAL VOLUME", total_v, color="#1F3B4D")
+        with c10: kpi_card("TOTAL BACKLOG", backlog_val, color="#D32F2F" if backlog_val > 0 else "#1F3B4D", flash=(backlog_val > 0))
+        with c11: kpi_card("AGED (>30 DAYS)", aged_count, color="#7B1FA2")
+
+        # Status Cards Row
+        if status_col and not df.empty:
+            status_counts = df[status_col].value_counts()
+            if not status_counts.empty:
+                stat_cols = st.columns(len(status_counts))
+                for i, (name, count) in enumerate(status_counts.items()):
+                    with stat_cols[i]:
+                        kpi_card(name.upper(), count, color="#FF6600")
+
+        st.divider()
+
+        # --- 4. ACTIONABLE DATA TABLES ---
+        available_cols = [c for c in ['Ref', 'Title', sd_col, 'Agent', org_col_name, 'Status'] if c in df.columns]
+        
+        col_p, col_a = st.columns(2)
+        with col_p:
+            st.subheader("Pending Tickets")
+            if not df_pending.empty:
+                st.dataframe(df_pending[available_cols], use_container_width=True, hide_index=True)
+            else:
+                st.info("No pending tickets.")
+                
+        with col_a:
+            st.subheader("Aged Tickets (>30 Days)")
+            if not df_aged.empty:
+                st.dataframe(df_aged[available_cols], use_container_width=True, hide_index=True)
+            else:
+                st.success("No aged tickets found.")
+
+# --- TAB 2: PERSONNEL PERFORMANCE ---
+    with tab2:
+        if not df.empty and 'Agent' in df.columns:
+            # Aggregate Data by Agent
+            agent_stats = df.groupby('Agent').agg(
+                Total_Tickets=('Ref', 'count'),
+                TTO_Met_Sum=('TTO MET', 'sum'),
+                TTR_Met_Sum=('TTR MET', 'sum')
+            ).reset_index()
+
+            # Calculate percentages based on the synced MET columns
+            agent_stats['TTO %'] = (agent_stats['TTO_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
+            agent_stats['TTR %'] = (agent_stats['TTR_Met_Sum'] / agent_stats['Total_Tickets'] * 100).round(1)
             
-    with col_a:
-        st.subheader("Aged Tickets (>30 Days)")
-        if not df_aged.empty and sd_col:
-            temp_a = df_aged.copy()
-            temp_a[sd_col] = pd.to_datetime(temp_a[sd_col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
-            st.dataframe(temp_a[available_cols], use_container_width=True, hide_index=True)
+            # Sort by volume to show most active agents first
+            agent_stats = agent_stats.sort_values(by='Total_Tickets', ascending=False)
+
+            # Chart visualization
+            fig_agent = px.bar(
+                agent_stats, 
+                x='Agent', 
+                y=['TTO %', 'TTR %'],
+                barmode='group', 
+                title="SLA Achievement by Technician",
+                color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'},
+                labels={'value': 'Percentage (%)', 'variable': 'Metric'}
+            )
+            
+            # Add target line (83.7%)
+            fig_agent.add_hline(y=83.7, line_dash="dot", line_color="red", annotation_text="Target 83.7%")
+            fig_agent.update_layout(yaxis_range=[0, 105])
+            
+            st.plotly_chart(fig_agent, use_container_width=True)
+
+            # Performance Table with Progress Bars
+            st.markdown("#### Detailed Personnel Metrics")
+            st.dataframe(
+                agent_stats[['Agent', 'Total_Tickets', 'TTO %', 'TTR %']],
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Agent": st.column_config.TextColumn("Technician"),
+                    "Total_Tickets": st.column_config.NumberColumn("Tickets Handled"),
+                    "TTO %": st.column_config.ProgressColumn(
+                        "TTO Performance", 
+                        min_value=0, 
+                        max_value=100, 
+                        format="%.1f%%"
+                    ),
+                    "TTR %": st.column_config.ProgressColumn(
+                        "TTR Performance", 
+                        min_value=0, 
+                        max_value=100, 
+                        format="%.1f%%"
+                    )
+                }
+            )
         else:
-            st.success("No aged tickets found.")
+            st.info("Agent data is not available for the current selection.")
 
-    # 4. Top 10 Customers Chart & Table
-    st.markdown('<span class="section-header">Top 10 Customers by Ticket Volume</span>', unsafe_allow_html=True)
-    if org_col_name in df.columns:
-        top_cust = df.groupby(org_col_name)['Ref'].count().reset_index().sort_values('Ref', ascending=False).head(10)
-        top_cust.columns = ['Customer Name', 'Ticket Count']
-        
-        c_chart, c_table = st.columns([2, 1])
-        with c_chart:
-            fig_cust = px.bar(top_cust, x='Ticket Count', y='Customer Name', orientation='h', color_discrete_sequence=['#FF6600'])
-            fig_cust.update_layout(height=400, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_cust, use_container_width=True)
-        with c_table:
-            st.dataframe(top_cust, use_container_width=True, hide_index=True, height=400)
-
-    # 5. Monthly SLA Analysis Chart & Performance Table
-    st.markdown('<span class="section-header">Monthly SLA Analysis</span>', unsafe_allow_html=True)
-    if sd_col:
-        df['Month'] = pd.to_datetime(df[sd_col], errors='coerce').dt.strftime('%Y-%m')
-        monthly = df.groupby('Month').agg({'Ref':'count','TTO_Done':'sum','TTR_Done':'sum'}).reset_index()
-        monthly['TTO %'] = (monthly['TTO_Done'] / monthly['Ref'] * 100).round(1)
-        monthly['TTR %'] = (monthly['TTR_Done'] / monthly['Ref'] * 100).round(1)
-        
-        cl, cr = st.columns([2, 1])
-        with cl:
-            fig_sla = px.bar(monthly, x='Month', y=['TTO %', 'TTR %'], barmode='group', color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'})
-            fig_sla.update_layout(height=350, margin=dict(l=0, r=0, t=20, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
-            st.plotly_chart(fig_sla, use_container_width=True)
-        with cr:
-            st.markdown("#### Monthly Performance Summary")
-            st.dataframe(monthly[['Month', 'Ref', 'TTO %', 'TTR %']], use_container_width=True, hide_index=True, height=350)
-
-# --- 4. DASHBOARD CONTENT WRAPPER ---
-def render_dashboard_content(df):
-    """
-    Wrap all your metrics, tabs, and charts in this function.
-    This is what the fragment will refresh every 30 seconds.
-    """
-    # 1. KPIs
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Tickets", len(df))
-
-with tab2:
-    
-    if not df.empty and 'Agent' in df.columns:
-        # A. Aggregate Data by Agent
-        agent_stats = df.groupby('Agent').agg(
-            Total_Tickets=('Agent', 'count'),
-            TTO_Met=('TTO_Done', 'sum'),
-            TTR_Met=('TTR_Done', 'sum')
-        ).reset_index()
-
-        # B. Calculate Percentages
-        agent_stats['TTO %'] = (agent_stats['TTO_Met'] / agent_stats['Total_Tickets'] * 100).round(1)
-        agent_stats['TTR %'] = (agent_stats['TTR_Met'] / agent_stats['Total_Tickets'] * 100).round(1)
-        
-        # Sort by total volume for the first view
-        agent_stats = agent_stats.sort_values(by='Total_Tickets', ascending=False)
-
-        # C. Visualization - Bar Chart
-        fig_agent = px.bar(
-            agent_stats, 
-            x='Agent', 
-            y=['TTO %', 'TTR %'],
-            barmode='group',
-            title="SLA Achievement by Technician",
-            color_discrete_map={'TTO %': '#FF6600', 'TTR %': '#1F3B4D'},
-            labels={'value': 'Percentage (%)', 'variable': 'Metric'}
-        )
-        # Add a target line for your 83.7% goal
-        fig_agent.add_hline(y=83.7, line_dash="dot", line_color="red", annotation_text="Target 83.7%")
-        
-        st.plotly_chart(fig_agent, use_container_width=True)
-
-        # D. Summary Table
-        st.markdown("### Individual Performance Breakdown")
-        st.dataframe(
-            agent_stats[['Agent', 'Total_Tickets', 'TTO %', 'TTR %']],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "TTO %": st.column_config.ProgressColumn("TTO Performance", min_value=0, max_value=100, format="%.1f%%"),
-                "TTR %": st.column_config.ProgressColumn("TTR Performance", min_value=0, max_value=100, format="%.1f%%")
-            }
-        )
-    else:
-        st.warning("No Personnel data found. Please ensure 'Agent' exists in your data source.")
 # --- TAB 3: GROUP HIERARCHY ---
     with tab3:
-        st.markdown('<div class="section-header" style="color:#FF6600; font-size:1.5rem; font-weight:bold; margin-bottom:20px;">Conglomerate & Parent Group Explorer</div>', unsafe_allow_html=True)
         
         # FORCE MAPPING: Ensure the function runs on the current dataframe
         org_col_for_mapping = next((c for c in df.columns if 'organization' in c.lower() or 'customer' in c.lower()), None)
@@ -1031,154 +1048,196 @@ with tab2:
             st.warning("Mapping column 'Parent_Company' not found.")
 
 # --- TAB 4: EXECUTIVE REPORT ---
-with tab4:
-    st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
-    
-    # 1. Safe Date Label (Prevents TypeError: 'NoneType' object is not subscriptable)
-    if 'selected_dates' in locals() and isinstance(selected_dates, (list, tuple)) and len(selected_dates) == 2:
-        date_label = f"{selected_dates[0]} to {selected_dates[1]}"
-    else:
-        date_label = "Full Operational Range"
-
-    st.caption(f"Operational Scope: {selected_unit} | Period: {date_label}")
-
-    # 2. Performance Metrics Calculation
-    # Uses column names established in your master_data_sync script
-    current_total = len(df) if 'df' in locals() else 0
-    
-    # Dynamic column mapping to match your MySQL 'analytics_data' table
-    tto_col = 'TTO MET' if 'TTO MET' in df.columns else 'TTO_Done'
-    ttr_col = 'TTR MET' if 'TTR MET' in df.columns else 'TTR_Done'
-
-    rep_tto = (df[tto_col].sum() / current_total * 100) if current_total > 0 and tto_col in df.columns else 0
-    rep_ttr = (df[ttr_col].sum() / current_total * 100) if current_total > 0 and ttr_col in df.columns else 0
-
-    # Display Top Metrics Row
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Selected Volume", f"{current_total:,}")
-    m2.metric("TTO Compliance", f"{rep_tto:.1f}%")
-    m3.metric("TTR Compliance", f"{rep_ttr:.1f}%")
-    m4.metric("Aged Backlog", aged_count if 'aged_count' in locals() else 0)
-
-    st.divider()
-
-    # 3. Risk Analysis Section
-    col_risk, col_drivers = st.columns(2)
-    
-    with col_risk:
-        st.error(f"### Critical Risks\n* **Aged Tickets:** {aged_count if 'aged_count' in locals() else 0}\n* **SLA Breaches:** {current_total - df[ttr_col].sum() if ttr_col in df.columns else 0}")
-    
-    with col_drivers:
-        st.info("### Delay Drivers\nTop factors currently impacting resolution times include pending vendor feedback and high-complexity service holds.")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # 4. Board Assets (PDF Generation)
-    st.subheader("Board Meeting Assets")
-    if st.button("PREPARE PDF REPORT", use_container_width=True):
-        # Calculation for breach count to pass into PDF
-        ttr_breach_count = (current_total - df[ttr_col].sum()) if ttr_col in df.columns else 0
+    with tab4:
+        st.markdown('<h2 style="color: #FF6600; margin-bottom: 0;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
         
-        pdf_bytes = generate_board_pdf(
-            current_total, 
-            0, 
-            rep_tto, 
-            rep_ttr, 
-            aged_count if 'aged_count' in locals() else 0, 
-            ttr_breach_count, 
-            selected_unit, 
-            date_label, 
-            "General Analysis"
-        )
-        st.download_button(
-            label="📄 DOWNLOAD BOARD-READY PDF BROCHURE",
-            data=pdf_bytes,
-            file_name=f"Executive_Summary_{datetime.now().strftime('%Y%m%d')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+        # 1. Date Label Logic
+        # Checking against the sidebar date filter variables
+        if 'start_date' in locals() and 'end_date' in locals():
+            date_label = f"{start_date} to {end_date}"
+        else:
+            date_label = "Full Operational Range"
 
-# --- TAB 5: AUDIT HISTORY ---
-with tab5:
-    st.markdown('<span class="section-header">Full Ticket Status Audit Trail</span>', unsafe_allow_html=True)
-    
-    view_mode = st.radio("Select View Mode:", ["Search Specific Ticket", "View Entire Historical Log"], horizontal=True, key="audit_view_radio")
+        st.caption(f"Operational Scope: {selected_unit.upper()} | Period: {date_label}")
 
-    try:
-        # Use the SQLAlchemy engine instead of sqlite3.connect(DB_FILE)
-        with engine.connect() as conn:
-            if view_mode == "Search Specific Ticket":
-                search_ref = st.text_input("Enter Ticket Ref ID:", placeholder="e.g. R-154009", key="ticket_search_input")
+        # 2. Performance Metrics Calculation
+        # These variables are now derived directly from the 'df' passed into the function
+        current_total = len(df)
+        
+        # Map to the columns established in the sync script
+        tto_col = 'TTO MET' if 'TTO MET' in df.columns else 'TTO_Done'
+        ttr_col = 'TTR MET' if 'TTR MET' in df.columns else 'TTR_Done'
+
+        rep_tto = (df[tto_col].sum() / current_total * 100) if current_total > 0 and tto_col in df.columns else 0
+        rep_ttr = (df[ttr_col].sum() / current_total * 100) if current_total > 0 and ttr_col in df.columns else 0
+        
+        # Calculate breach count for the risk section
+        total_ttr_breaches = (current_total - int(df[ttr_col].sum())) if ttr_col in df.columns else 0
+
+        # Display Top Metrics Row
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Selected Volume", f"{current_total:,}")
+        m2.metric("TTO Compliance", f"{rep_tto:.1f}%")
+        m3.metric("TTR Compliance", f"{rep_ttr:.1f}%")
+        # aged_count is calculated at the top of the render function
+        m4.metric("Aged Backlog", aged_count)
+
+        st.divider()
+
+        # 3. Risk Analysis Section
+        col_risk, col_drivers = st.columns(2)
+        
+        with col_risk:
+            st.error(f"### Critical Risks\n* **Aged Tickets (>30 Days):** {aged_count}\n* **SLA Breaches (TTR):** {total_ttr_breaches}")
+        
+        with col_drivers:
+            st.info("### Delay Drivers\nTop factors currently impacting resolution times include pending vendor feedback and high-complexity service holds.")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # 4. Board Assets (PDF Generation)
+        st.subheader("Board Meeting Assets")
+        if st.button("PREPARE PDF REPORT", use_container_width=True):
+            try:
+                # Passing calculated metrics to your PDF generator function
+                pdf_bytes = generate_board_pdf(
+                    current_total, 
+                    0, # Placeholder for other count if needed
+                    rep_tto, 
+                    rep_ttr, 
+                    aged_count, 
+                    total_ttr_breaches, 
+                    selected_unit, 
+                    date_label, 
+                    "General Analysis"
+                )
                 
-                if search_ref:
-                    # Using text() for MySQL compatibility and security
-                    query = text("SELECT Status_Log_Date, Ref, Current_Status, Agent FROM history_table WHERE Ref = :ref ORDER BY Status_Log_Date ASC")
-                    history_df = pd.read_sql(query, conn, params={"ref": search_ref.strip()})
+                st.download_button(
+                    label="DOWNLOAD BOARD-READY PDF BROCHURE",
+                    data=pdf_bytes,
+                    file_name=f"Executive_Summary_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Error generating report: {e}")
+                
+# --- TAB 5: AUDIT HISTORY ---
+    with tab5:
+        
+        view_mode = st.radio(
+            "Select View Mode:", 
+            ["Search Specific Ticket", "View Entire Historical Log"], 
+            horizontal=True, 
+            key="audit_view_radio"
+        )
+
+        try:
+            # Using the established SQLAlchemy engine
+            with engine.connect() as conn:
+                if view_mode == "Search Specific Ticket":
+                    search_ref = st.text_input("Enter Ticket Ref ID:", placeholder="e.g. R-154009", key="ticket_search_input")
                     
-                    if not history_df.empty:
-                        # 1. Calculate Duration Logic
-                        history_df['Status_Log_Date'] = pd.to_datetime(history_df['Status_Log_Date'])
-                        history_df['Duration'] = history_df['Status_Log_Date'].diff().shift(-1)
+                    if search_ref:
+                        # Use text() for secure parameterized queries
+                        query = text("""
+                            SELECT Status_Log_Date, Ref, Current_Status, Agent 
+                            FROM history_table 
+                            WHERE Ref = :ref 
+                            ORDER BY Status_Log_Date ASC
+                        """)
+                        history_df = pd.read_sql(query, conn, params={"ref": search_ref.strip()})
                         
-                        def format_duration(td):
-                            if pd.isna(td): return "Active Now"
-                            days = td.days
-                            hours, remainder = divmod(td.seconds, 3600)
-                            minutes, _ = divmod(remainder, 60)
-                            return f"{days}d {hours}h {minutes}m" if days > 0 else f"{hours}h {minutes}m"
+                        if not history_df.empty:
+                            # 1. Calculate Duration Logic
+                            history_df['Status_Log_Date'] = pd.to_datetime(history_df['Status_Log_Date'])
+                            
+                            # Calculate time difference between status changes
+                            history_df['Duration'] = history_df['Status_Log_Date'].diff().shift(-1)
+                            
+                            def format_duration(td):
+                                if pd.isna(td): return "Active Now"
+                                days = td.days
+                                hours, remainder = divmod(td.seconds, 3600)
+                                minutes, _ = divmod(remainder, 60)
+                                if days > 0:
+                                    return f"{days}d {hours}h {minutes}m"
+                                return f"{hours}h {minutes}m"
 
-                        history_df['Time Spent'] = history_df['Duration'].apply(format_duration)
-                        
-                        # Prepare for display
-                        display_df = history_df.sort_values(by='Status_Log_Date', ascending=False).copy()
-                        display_df.rename(columns={'Status_Log_Date': 'Date & Time', 'Current_Status': 'Status', 'Ref': 'Ticket ID'}, inplace=True)
-                        display_df['Date & Time'] = display_df['Date & Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                            history_df['Time Spent'] = history_df['Duration'].apply(format_duration)
+                            
+                            # Prepare for display (Latest status at top)
+                            display_df = history_df.sort_values(by='Status_Log_Date', ascending=False).copy()
+                            display_df.rename(columns={
+                                'Status_Log_Date': 'Date & Time', 
+                                'Current_Status': 'Status', 
+                                'Ref': 'Ticket ID'
+                            }, inplace=True)
+                            
+                            display_df['Date & Time'] = display_df['Date & Time'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
-                        # 2. High-Contrast Styling
-                        def apply_hc_style(val):
+                            # 2. Status Highlighting Logic
+                            def apply_hc_style(val):
+                                s = str(val).strip().lower()
+                                if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
+                                if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
+                                if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
+                                if 'escalated' in s: return 'background-color: #dc3545; color: white; font-weight: bold;'
+                                return ''
+
+                            st.dataframe(
+                                display_df[['Date & Time', 'Status', 'Time Spent', 'Agent']].style.applymap(
+                                    apply_hc_style, subset=['Status']
+                                ),
+                                use_container_width=True, 
+                                hide_index=True
+                            )
+                        else:
+                            st.warning(f"No records found for Ticket ID: {search_ref}")
+
+                else:
+                    # Full Log View (Limited to 1000 for performance)
+                    full_query = text("""
+                        SELECT Status_Log_Date as 'Date & Time', 
+                               Ref as 'Ticket ID', 
+                               Current_Status as 'Status', 
+                               Agent 
+                        FROM history_table 
+                        ORDER BY Status_Log_Date DESC 
+                        LIMIT 1000
+                    """)
+                    full_df = pd.read_sql(full_query, conn)
+
+                    if not full_df.empty:
+                        full_df['Date & Time'] = pd.to_datetime(full_df['Date & Time']).dt.strftime('%Y-%m-%d %H:%M:%S')
+
+                        def apply_full_hc_style(val):
                             s = str(val).strip().lower()
                             if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
                             if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
                             if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
-                            if 'escalated' in s: return 'background-color: #dc3545; color: white; font-weight: bold;'
-                            return ''
+                            return 'background-color: #6c757d; color: white;'
 
                         st.dataframe(
-                            display_df[['Date & Time', 'Status', 'Time Spent', 'Agent']].style.applymap(apply_hc_style, subset=['Status']),
+                            full_df.style.applymap(apply_full_hc_style, subset=['Status']),
                             use_container_width=True, 
                             hide_index=True
                         )
+                        
+                        # Export functionality
+                        csv = full_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Export Audit Trail (CSV)", 
+                            data=csv, 
+                            file_name="audit_trail_export.csv", 
+                            mime="text/csv",
+                            use_container_width=True
+                        )
                     else:
-                        st.warning(f"No records found for Ticket ID: {search_ref}")
+                        st.info("The history table is currently empty.")
 
-            else:
-                # Full Log View (Limited to 1000 for performance)
-                full_query = text("SELECT Status_Log_Date as 'Date & Time', Ref as 'Ticket ID', Current_Status as 'Status', Agent FROM history_table ORDER BY Status_Log_Date DESC LIMIT 1000")
-                full_df = pd.read_sql(full_query, conn)
-
-                if not full_df.empty:
-                    full_df['Date & Time'] = pd.to_datetime(full_df['Date & Time']).dt.strftime('%Y-%m-%d %H:%M:%S')
-
-                    def apply_full_hc_style(val):
-                        s = str(val).strip().lower()
-                        if 'resolved' in s: return 'background-color: #28a745; color: white; font-weight: bold;'
-                        if 'pending' in s: return 'background-color: #ffc107; color: black; font-weight: bold;'
-                        if 'assigned' in s: return 'background-color: #007bff; color: white; font-weight: bold;'
-                        return 'background-color: #6c757d; color: white;'
-
-                    st.dataframe(
-                        full_df.style.applymap(apply_full_hc_style, subset=['Status']),
-                        use_container_width=True, 
-                        hide_index=True
-                    )
-                    
-                    csv = full_df.to_csv(index=False).encode('utf-8')
-                    st.download_button("Export Audit Trail (CSV)", csv, "audit_trail.csv", "text/csv")
-                else:
-                    st.info("The history table is currently empty.")
-
-    except Exception as e:
-        st.error(f"MySQL Audit Error: {str(e)}")
+        except Exception as e:
+            st.error(f"Audit Trail System Error: {str(e)}")
 
 # --- 1. PDF CLASS DEFINITION ---
 class SITS_Report(FPDF):
@@ -1342,11 +1401,6 @@ def sync_dashboard_ui():
         
         # Display the timestamp inside the fragment so you know it's live
         st.caption(f"Live Sync Active (30s) | Last Check: {datetime.now().strftime('%H:%M:%S')}")
-        
-        # IMPORTANT: You must call your dashboard UI inside here
-        render_dashboard_content(st.session_state.data)
-    else:
-        st.warning("Database currently empty. Please click 'Refresh & Wipe'.")
 
 # --- 5. MAIN APP EXECUTION ---
 if not st.session_state.data.empty:
@@ -1354,3 +1408,4 @@ if not st.session_state.data.empty:
     sync_dashboard_ui()
 else:
     st.info("No data available. Click 'REFRESH & WIPE DB' to import data from Excel.")
+
