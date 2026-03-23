@@ -10,3 +10,4 @@ pymysql
 mysqlclient>=2.1.0
 streamlit-autorefresh
 mysql-connector-python
+cryptography
