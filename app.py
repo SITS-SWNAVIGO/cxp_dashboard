@@ -18,15 +18,7 @@ from io import BytesIO
 import requests
 from sqlalchemy import text
 
-<<<<<<< HEAD
 # --- 1. CONFIGURATION (MySQL Connection) ---
-=======
-# interval is in milliseconds (300,000 ms = 5 minutes)
-count = st_autorefresh(interval=300000, key="fivedatarefresh")
-
-# --- 1. CONFIGURATION (Direct MySQL Connection) ---
-# We use the same credentials as your master_data_sync.py
->>>>>>> 1865b8a4ffb394b7ecb6d8f70d33ca5a972c2217
 DB_HOST = "213.210.36.220"
 DB_USER = "sits"
 DB_PASS = "123456"
@@ -364,7 +356,6 @@ def get_parent_company(name):
     return str(name).strip()
 
 def get_team_from_technician(name):
-<<<<<<< HEAD
     """
     Maps a technician's full name to their corresponding team.
     Returns 'Unassigned' if the technician is not in any predefined team.
@@ -412,41 +403,6 @@ def get_team_from_technician(name):
         if name in members:
             return team_name
 
-=======
-    name = str(name).strip()
-    
-    sits_support = [
-        "L.V Sudesh Dilhan", "Nuwan Weerasekara", "Mahela Ekanayaka", "Anushka Nayanatharu",
-        "Ruchira lakshitha bowandeniya", "Rusith Singhabahu", "Haritha Madhubhashana",
-        "Nirantha Madhushanka", "Kavinda Nethmal", "Heshan Lakshitha", "Sanath Manjula",
-        "Nadeesh Madhushan", "H.D.P Pradeep", "Dilan Madhawa", "SITS IT Support",
-        "Sayanthan Rasalinkam", "Malmi Nandasiri", "Uthayananthan Thanushanth",
-        "Ashan Aravinda", "Chameera Maduranga", "Praneeth Dilhan", "Lahiru Oshan",
-        "Sajith Salinda", "Ramesh Neranjan", "Rasika Dulshan", "Romesh Seneviratne",
-        "Sanjeewan Suthanthirabalan", "Supun Lakpriya", "Vishan Kenneth", "Kasun Karunasena",
-        "Kanagesh Kugan", "Jineth Gayan", "Pramuditha Ranganath", "Kalpa Senarathna", 
-        "Rusith Tharanga Silva", "Duminda Dayasiri"
-    ]
-    gamma_it = [
-        "Madhuka Gunaweera", "Vijay Philipkumar", "Chamal Dakshana", "Jeevan Indrajith",
-        "Preshan Silva", "Kavindu Basilu", "Nimna Mendis", "Janindu Hewaalankarage",
-        "Hasitha Munasinghe", "Gamma IT Group", "Maduka Pramoditha", "Sameera Rukshan",
-        "Hashan Madushanka"
-    ]
-    service_desk = [
-        "Mariyadas Melisha", "Apeksha Nilupuli", "Sahan Dananjaya", "Pathum Malshan",
-        "Sasanka Madusith", "Ositha Buddika"
-    ]
-    software_dept = ["Software Support", "Dev Team", "Application Support"]
-    enterprise_team = ["Enterprise Support", "Field Engineering", "Project Team", "N.V.P. Rathnayake"]
-
-    if name in sits_support: return "SITS IT Support"
-    if name in gamma_it: return "Gamma IT"
-    if name in service_desk: return "Service Desk"
-    if name in software_dept: return "Software Dept"
-    if name in enterprise_team: return "Enterprise Team"
-    
->>>>>>> 1865b8a4ffb394b7ecb6d8f70d33ca5a972c2217
     return "Unassigned"
 
 # --- 5. DATA PROCESSING ---
@@ -655,17 +611,11 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### FILTERS")
-<<<<<<< HEAD
     
     # --- DATA COPY ---
     df_base = st.session_state.data.copy()
     
     # --- DATE FILTER ---
-=======
-
-# 1. Date Filter Logic - Restoring the From/To Selectors
-    # Dynamically find date column to prevent KeyErrors
->>>>>>> 1865b8a4ffb394b7ecb6d8f70d33ca5a972c2217
     d_col = next((c for c in df_base.columns if 'start' in c.lower() or 'fixed' in c.lower()), None)
     if d_col and not df_base.empty:
         valid_dates = pd.to_datetime(df_base[d_col], errors='coerce').dropna()
