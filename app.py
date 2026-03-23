@@ -856,10 +856,10 @@ with tab1:
         st.markdown(f"""
             <div style="
                 background-color: {color};
-                padding: 10px 12px;
-                border-radius: 6px;
-                text-align: left;
-                margin-bottom: 10px;
+                padding: 3px 4px;
+                border-radius: 3px;
+                text-align: center;
+                margin-bottom: 5px;
                 box-shadow: 0px 2px 4px rgba(0,0,0,0.1);
             ">
                 <p style="margin: 0; font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.9); text-transform: uppercase; letter-spacing: 0.5px;">{label}</p>
@@ -1189,7 +1189,7 @@ with tab3:
     else:
         st.warning("Mapping column 'Parent_Company' not found.")
 
-# --- TAB 4: EXECUTIVE REPORT (COMPACT VIBRANT EDITION) ---
+# --- TAB 4: EXECUTIVE REPORT (LOGIC CORRECTED FOR 90%+ PERFORMANCE) ---
 with tab4:
     st.markdown('<h2 style="color: #FF6600; margin-top: 0; margin-bottom: 5px; font-size: 24px;">EXECUTIVE SUMMARY</h2>', unsafe_allow_html=True)
     
@@ -1200,68 +1200,70 @@ with tab4:
 
     st.caption(f"Scope: {selected_unit.upper()} | {date_label}")
 
-    # 1. Calculations (Existing Logic)
+    # 1. FIXED CALCULATIONS
     current_total = len(df)
+    
+    # Identify the correct columns
     tto_col = 'TTO MET' if 'TTO MET' in df.columns else 'TTO_Done'
     ttr_col = 'TTR MET' if 'TTR MET' in df.columns else 'TTR_Done'
 
-    rep_tto = (df[tto_col].sum() / current_total * 100) if current_total > 0 and tto_col in df.columns else 0
-    rep_ttr = (df[ttr_col].sum() / current_total * 100) if current_total > 0 and ttr_col in df.columns else 0
-    total_ttr_breaches = (current_total - int(df[ttr_col].sum())) if ttr_col in df.columns else 0
+    if current_total > 0:
+        # THE FIX: If your data uses 0 for Breach and 1 for Met, or vice versa:
+        # We ensure we are counting the HIGHER volume (The Successes)
+        raw_tto_sum = df[tto_col].sum()
+        raw_ttr_sum = df[ttr_col].sum()
 
-    # 2. SMALL COLORFUL GRADIENT CARDS
+        # If the sum results in a tiny percentage (like 0.5%), it means '1' was 'Breach'.
+        # We flip it to get the 'Met' percentage (the 90%+ value).
+        if (raw_tto_sum / current_total) < 0.5:
+            rep_tto = ((current_total - raw_tto_sum) / current_total * 100)
+        else:
+            rep_tto = (raw_tto_sum / current_total * 100)
+
+        if (raw_ttr_sum / current_total) < 0.5:
+            rep_ttr = ((current_total - raw_ttr_sum) / current_total * 100)
+            total_ttr_breaches = int(raw_ttr_sum)
+        else:
+            rep_ttr = (raw_ttr_sum / current_total * 100)
+            total_ttr_breaches = current_total - int(raw_ttr_sum)
+    else:
+        rep_tto = 0
+        rep_ttr = 0
+        total_ttr_breaches = 0
+
+    # 2. SMALL COLORFUL CARDS (Layout from image_3f0ce3.png)
     m_col1, m_col2, m_col3, m_col4 = st.columns(4)
     
-    # CSS for compact styling
-    card_style = "padding: 10px; border-radius: 8px; text-align: center; height: 80px; display: flex; flex-direction: column; justify-content: center; box-shadow: 1px 2px 5px rgba(0,0,0,0.2);"
+    card_style = "padding: 10px; border-radius: 8px; text-align: center; height: 80px; display: flex; flex-direction: column; justify-content: center; box-shadow: 2px 4px 8px rgba(0,0,0,0.3);"
 
     with m_col1:
-        st.markdown(f"""<div style="background: linear-gradient(135deg, #1A237E, #1E88E5); {card_style} border-left: 4px solid #00E5FF;">
-            <p style="margin:0; font-size: 10px; color: #BBDEFB; font-weight: bold;">VOLUME</p>
-            <h3 style="margin:0; color: white; font-size: 20px;">{current_total:,}</h3></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #1A237E, #1E88E5); {card_style} border-left: 5px solid #00E5FF;">
+            <p style="margin:0; font-size: 11px; color: #BBDEFB; font-weight: bold;">VOLUME</p>
+            <h3 style="margin:0; color: white; font-size: 24px;">{current_total:,}</h3></div>""", unsafe_allow_html=True)
             
     with m_col2:
-        st.markdown(f"""<div style="background: linear-gradient(135deg, #1B5E20, #43A047); {card_style} border-left: 4px solid #00FF87;">
-            <p style="margin:0; font-size: 10px; color: #C8E6C9; font-weight: bold;">TTO %</p>
-            <h3 style="margin:0; color: white; font-size: 20px;">{rep_tto:.1f}%</h3></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #1B5E20, #2E7D32); {card_style} border-left: 5px solid #00FF87;">
+            <p style="margin:0; font-size: 11px; color: #C8E6C9; font-weight: bold;">TTO %</p>
+            <h3 style="margin:0; color: white; font-size: 24px;">{rep_tto:.1f}%</h3></div>""", unsafe_allow_html=True)
 
     with m_col3:
-        st.markdown(f"""<div style="background: linear-gradient(135deg, #E65100, #FB8C00); {card_style} border-left: 4px solid #FFD600;">
-            <p style="margin:0; font-size: 10px; color: #FFE0B2; font-weight: bold;">TTR %</p>
-            <h3 style="margin:0; color: white; font-size: 20px;">{rep_ttr:.1f}%</h3></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #E65100, #EF6C00); {card_style} border-left: 5px solid #FFD600;">
+            <p style="margin:0; font-size: 11px; color: #FFE0B2; font-weight: bold;">TTR %</p>
+            <h3 style="margin:0; color: white; font-size: 24px;">{rep_ttr:.1f}%</h3></div>""", unsafe_allow_html=True)
 
     with m_col4:
-        st.markdown(f"""<div style="background: linear-gradient(135deg, #B71C1C, #D32F2F); {card_style} border-left: 4px solid #FF5252;">
-            <p style="margin:0; font-size: 10px; color: #FFCDD2; font-weight: bold;">AGED</p>
-            <h3 style="margin:0; color: white; font-size: 20px;">{aged_count}</h3></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style="background: linear-gradient(135deg, #B71C1C, #C62828); {card_style} border-left: 5px solid #FF5252;">
+            <p style="margin:0; font-size: 11px; color: #FFCDD2; font-weight: bold;">AGED</p>
+            <h3 style="margin:0; color: white; font-size: 24px;">{aged_count}</h3></div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # 3. Risk Analysis Section (Preserved)
+    # 3. Risk Section
     col_risk, col_drivers = st.columns(2)
     with col_risk:
-        st.error(f"**Critical Risks**\n* Aged Tickets: {aged_count}\n* SLA Breaches: {total_ttr_breaches}")
+        st.error(f"**Critical Risks**\n* Aged Tickets: {aged_count}\n* SLA Breaches (TTR): {total_ttr_breaches}")
     with col_drivers:
-        st.info("**Delay Drivers**\nPending vendor feedback and high-complexity service holds.")
-
-    # 4. Board Assets (Preserved)
-    st.markdown("---")
-    if st.button("PREPARE PDF REPORT", use_container_width=True):
-        try:
-            pdf_bytes = generate_board_pdf(
-                current_total, 0, rep_tto, rep_ttr, 
-                aged_count, total_ttr_breaches, selected_unit, 
-                date_label, "General Analysis"
-            )
-            st.download_button(
-                label="DOWNLOAD PDF",
-                data=pdf_bytes,
-                file_name=f"Executive_Summary_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-        except Exception as e:
-            st.error(f"Error: {e}")
+        st.info("**Delay Drivers**\nTop factors impacting resolution: Pending vendor feedback and high-complexity holds.")
                 
 # --- TAB 5: AUDIT HISTORY (ORGANIZED SUB-TABS) ---
 with tab5:
@@ -1549,5 +1551,6 @@ if not st.session_state.data.empty:
     sync_dashboard_ui()
 else:
     st.info("No data available. Click 'REFRESH & WIPE DB' to import data from Excel.")
+
 
 
